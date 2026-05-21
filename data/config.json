@@ -1,0 +1,7 @@
+{
+  "api_key": "sk-751e650c90ef4e9ab386c0891dd1c8d1",
+  "base_url": "https://api.deepseek.com/v1",
+  "model_name": "deepseek-v4-flash",
+  "temperature": 0.7,
+  "max_tokens": 4000
+}
