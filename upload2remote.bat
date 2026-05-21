@@ -117,10 +117,11 @@ echo Remote image proof passed.
 echo.
 
 echo [Step 8/10] Prepare and validate remote bind mounts...
-ssh %REMOTE_USER%@%REMOTE_HOST% "set -e; sudo mkdir -p /bak/docker/shetuandabao/data; if [ -d /bak/docker/shetuandabao/data/config.json ]; then echo 'ERROR: config.json is a directory, removing'; sudo rm -rf /bak/docker/shetuandabao/data/config.json; fi; docker run --user root --rm -v /bak/docker/shetuandabao/data:/tmp/outdata %IMAGE_NAME%:latest sh -c 'if [ ! -f /tmp/outdata/config.json ]; then cp /app/data/config.json /tmp/outdata/ 2>/dev/null || echo \"No config.json in image to seed\"; else echo \"config.json already exists\"; fi && chown -R 1000:1000 /tmp/outdata'; sudo chown -R 1000:1000 /bak/docker/shetuandabao/data"
+echo [8.1] Creating directory and setting permissions (requires sudo password)...
+ssh -t %REMOTE_USER%@%REMOTE_HOST% "set -e; sudo mkdir -p /bak/docker/shetuandabao/data; if [ -d /bak/docker/shetuandabao/data/config.json ]; then echo 'ERROR: config.json is a directory, removing'; sudo rm -rf /bak/docker/shetuandabao/data/config.json; fi; sudo chown -R 1000:1000 /bak/docker/shetuandabao/data; docker run --user root --rm -v /bak/docker/shetuandabao/data:/tmp/outdata %IMAGE_NAME%:latest sh -c 'if [ ! -f /tmp/outdata/config.json ]; then cp /app/data/config.json /tmp/outdata/ 2>/dev/null || echo \"No config.json in image to seed\"; else echo \"config.json already exists\"; fi && chown -R 1000:1000 /tmp/outdata'; sudo chown -R 1000:1000 /bak/docker/shetuandabao/data || exit 1"
 if errorlevel 1 (
     echo ERROR: Remote mount preparation failed.
-    echo Tip: check whether a database file path, such as config.json, was accidentally created as a directory.
+    echo Tip: Ensure sudo password is entered correctly and the user has docker permissions.
     pause
     exit /b 1
 )
@@ -158,8 +159,31 @@ if errorlevel 1 (
 echo.
 
 echo [Verify] Wait for remote HTTP service to become ready...
-ssh %REMOTE_USER%@%REMOTE_HOST% "i=1; while [ $i -le 30 ]; do if command -v curl >/dev/null 2>&1; then curl -fsS http://127.0.0.1:%CONTAINER_PORT%/ >/dev/null && exit 0; else wget -q --spider http://127.0.0.1:%CONTAINER_PORT%/ >/dev/null && exit 0; fi; sleep 2; i=$((i+1)); done; exit 1"
-if errorlevel 1 (
+set "HTTP_CHECK_PASSED=0"
+for /L %%i in (1,1,30) do (
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker inspect --format='{{.State.Status}}' %CONTAINER_NAME% 2>nul | grep -qi running"
+    if errorlevel 1 (
+        echo Container is not running. Checking status...
+        ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+        ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 50 %CONTAINER_NAME%"
+        echo ERROR: Container failed to stay running.
+        pause
+        exit /b 1
+    )
+
+    ssh %REMOTE_USER%@%REMOTE_HOST% "if command -v curl >/dev/null 2>&1; then curl -fsS --max-time 2 http://127.0.0.1:%CONTAINER_PORT%/api/health >/dev/null && exit 0; else wget -q --spider --timeout=2 http://127.0.0.1:%CONTAINER_PORT%/api/health >/dev/null && exit 0; fi; exit 1"
+    if not errorlevel 1 (
+        set "HTTP_CHECK_PASSED=1"
+        goto HTTP_CHECK_DONE
+    )
+    echo Waiting for service... attempt %%i/30
+    timeout /t 2 /nobreak >nul
+)
+
+:HTTP_CHECK_DONE
+if "%HTTP_CHECK_PASSED%"=="1" (
+    echo Remote localhost HTTP check passed.
+) else (
     echo ERROR: Remote HTTP did not become ready at http://127.0.0.1:%CONTAINER_PORT%/
     echo.
     echo Remote container status:
@@ -170,7 +194,168 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo Remote localhost HTTP check passed.
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
+echo.
+    echo Remote container status:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker ps -a --filter name=^/%CONTAINER_NAME%$"
+    echo.
+    echo Recent remote container logs:
+    ssh %REMOTE_USER%@%REMOTE_HOST% "docker logs --tail 120 %CONTAINER_NAME%"
+    pause
+    exit /b 1
+)
 echo.
 
 echo [Verify] Try accessing the remote service from this PC...
