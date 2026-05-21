@@ -289,6 +289,17 @@
     <header>
       <h1>氛围编程 · 社团资料收集</h1>
       <p>填写课题信息，上传照片和签到表，导出完整档案</p>
+      <div style="position: absolute; top: 1rem; right: 1rem; display: flex; align-items: center; gap: 0.75rem;">
+        <span style="color: var(--text-secondary); font-size: 0.875rem;">
+          欢迎，<strong id="currentUser"></strong>
+        </span>
+        <a href="history.html" class="btn btn-secondary" style="font-size: 0.875rem; padding: 0.375rem 0.75rem;">
+          历史记录
+        </a>
+        <button class="btn btn-secondary" onclick="logout()" style="font-size: 0.875rem; padding: 0.375rem 0.75rem;">
+          退出
+        </button>
+      </div>
     </header>
 
     <div id="validationMsg" class="validation-msg"></div>
@@ -337,11 +348,18 @@
     </div>
 
     <footer>
-      <a href="admin.html">管理后台</a> · 氛围编程社团资料系统
+      <a href="history.html">历史记录</a> · <a href="login.html">退出登录</a> · 氛围编程社团资料系统
     </footer>
   </div>
 
   <script>
+    const userToken = localStorage.getItem('user_token');
+    const username = localStorage.getItem('username');
+
+    if (!userToken) {
+      window.location.href = '/login.html';
+    }
+
     const photos = [];
     let signPhoto = null;
 
@@ -358,6 +376,15 @@
     const photoInput = document.getElementById('photoInput');
     const signDropZone = document.getElementById('signDropZone');
     const signInput = document.getElementById('signInput');
+
+    document.getElementById('currentUser').textContent = username;
+
+    function logout() {
+      localStorage.removeItem('user_token');
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('username');
+      window.location.href = '/login.html';
+    }
 
     photoDropZone.addEventListener('click', () => photoInput.click());
     signDropZone.addEventListener('click', () => signInput.click());
@@ -639,7 +666,52 @@
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        showValidation('导出成功！', 'success');
+        const reader = new FileReader();
+        reader.onload = async function() {
+          const base64Data = reader.result;
+          const photosData = [];
+          for (const photo of photos) {
+            const photoBase64 = await new Promise(resolve => {
+              const r = new FileReader();
+              r.onload = () => resolve(r.result);
+              r.readAsDataURL(photo.file);
+            });
+            photosData.push({ name: photo.originalName, data: photoBase64, caption: photo.caption });
+          }
+
+          let signPhotoData = null;
+          if (signPhoto) {
+            signPhotoData = {
+              name: signPhoto.originalName,
+              data: await new Promise(resolve => {
+                const r = new FileReader();
+                r.onload = () => resolve(r.result);
+                r.readAsDataURL(signPhoto.file);
+              }),
+            };
+          }
+
+          try {
+            await fetch('/api/export', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${userToken}`,
+              },
+              body: JSON.stringify({
+                topic,
+                summary,
+                photos: photosData,
+                signPhoto: signPhotoData,
+              }),
+            });
+          } catch (e) {
+            console.error('保存历史记录失败:', e);
+          }
+        };
+        reader.readAsDataURL(content);
+
+        showValidation('导出成功！已保存到历史记录', 'success');
       } catch (error) {
         showValidation('导出失败: ' + error.message, 'error');
       } finally {
