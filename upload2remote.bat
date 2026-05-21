@@ -117,19 +117,38 @@ echo Remote image proof passed.
 echo.
 
 echo [Step 8/10] Prepare and validate remote bind mounts...
-echo [8.1] Creating directory and setting permissions (requires sudo password)...
-ssh -t %REMOTE_USER%@%REMOTE_HOST% "set -e; sudo mkdir -p /bak/docker/shetuandabao/data; if [ -d /bak/docker/shetuandabao/data/config.json ]; then echo 'ERROR: config.json is a directory, removing'; sudo rm -rf /bak/docker/shetuandabao/data/config.json; fi; sudo chown -R 1000:1000 /bak/docker/shetuandabao/data; docker run --user root --rm -v /bak/docker/shetuandabao/data:/tmp/outdata %IMAGE_NAME%:latest sh -c 'if [ ! -f /tmp/outdata/config.json ]; then cp /app/data/config.json /tmp/outdata/ 2>/dev/null || echo \"No config.json in image to seed\"; else echo \"config.json already exists\"; fi && chown -R 1000:1000 /tmp/outdata'; sudo chown -R 1000:1000 /bak/docker/shetuandabao/data || exit 1"
+echo [8.1] Create directory and set ownership to 1000:1000 (appuser)...
+ssh -t %REMOTE_USER%@%REMOTE_HOST% "sudo mkdir -p /bak/docker/shetuandabao/data && sudo chown -R 1000:1000 /bak/docker/shetuandabao/data && echo 'Directory ownership set OK'"
 if errorlevel 1 (
-    echo ERROR: Remote mount preparation failed.
-    echo Tip: Ensure sudo password is entered correctly and the user has docker permissions.
+    echo ERROR: Failed to set directory ownership.
     pause
     exit /b 1
 )
+
+echo [8.2] Check if config.json is a directory (common mistake)...
+ssh %REMOTE_USER%@%REMOTE_HOST% "if [ -d /bak/docker/shetuandabao/data/config.json ]; then echo 'ERROR: config.json is a directory, removing'; sudo rm -rf /bak/docker/shetuandabao/data/config.json; else echo 'config.json check OK'; fi"
+
+echo [8.3] Seed config.json if missing...
+ssh %REMOTE_USER%@%REMOTE_HOST% "docker run --user root --rm -v /bak/docker/shetuandabao/data:/tmp/outdata %IMAGE_NAME%:latest sh -c 'test -f /tmp/outdata/config.json || cp /app/data/config.json /tmp/outdata/'"
+if errorlevel 1 (
+    echo WARNING: Failed to seed config.json.
+)
+
+echo [8.4] Fix ownership after docker run...
+ssh -t %REMOTE_USER%@%REMOTE_HOST% "sudo chown -R 1000:1000 /bak/docker/shetuandabao/data && echo 'Final ownership fix OK'"
+if errorlevel 1 (
+    echo ERROR: Failed to fix ownership after seeding.
+    pause
+    exit /b 1
+)
+
+echo [8.5] Verify ownership...
+ssh %REMOTE_USER%@%REMOTE_HOST% "ls -la /bak/docker/shetuandabao/data/ && stat -c '%%U:%%G' /bak/docker/shetuandabao/data"
 echo Remote mount preparation passed.
 echo.
 
 echo [Step 9/10] Run disposable remote mounted test...
-ssh %REMOTE_USER%@%REMOTE_HOST% "docker run --rm -v /bak/docker/shetuandabao/data:/app/data %IMAGE_NAME%:latest sh -c 'test -d /app/data && ls -la /app/data && echo \"Data directory OK\" || echo \"ERROR: Data directory not accessible\"'"
+ssh %REMOTE_USER%@%REMOTE_HOST% "docker run --rm -v /bak/docker/shetuandabao/data:/app/data %IMAGE_NAME%:latest sh -c 'ls -la /app/data && touch /app/data/.write_test && rm /app/data/.write_test && echo \"Data directory read/write OK\" || echo \"ERROR: Data directory not accessible\"'"
 if errorlevel 1 (
     echo ERROR: Disposable mounted test failed. Do not start the final container until this passes.
     pause
