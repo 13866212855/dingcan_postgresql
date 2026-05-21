@@ -46,6 +46,46 @@ if (!fs.existsSync(configPath)) {
   saveConfig(defaultConfig);
 }
 
+const bcrypt = require('bcryptjs');
+
+const usersPath = path.join(dataDir, 'users.json');
+const historyPath = path.join(dataDir, 'history.json');
+const exportsDir = path.join(dataDir, 'exports');
+
+if (!fs.existsSync(usersPath)) {
+  fs.writeFileSync(usersPath, '[]', 'utf8');
+}
+if (!fs.existsSync(historyPath)) {
+  fs.writeFileSync(historyPath, '[]', 'utf8');
+}
+if (!fs.existsSync(exportsDir)) {
+  fs.mkdirSync(exportsDir, { recursive: true });
+}
+
+function loadUsers() {
+  try {
+    return JSON.parse(fs.readFileSync(usersPath, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function loadHistory() {
+  try {
+    return JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), 'utf8');
+}
+
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -57,6 +97,199 @@ function authenticateToken(req, res, next) {
     next();
   });
 }
+
+function authenticateUser(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: '请先登录' });
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err || !decoded.userId) return res.status(403).json({ error: '登录已过期' });
+    req.user = decoded;
+    next();
+  });
+}
+
+app.post('/api/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: '请提供用户名和密码' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: '密码至少6个字符' });
+  }
+
+  const users = loadUsers();
+  if (users.find(u => u.username === username)) {
+    return res.status(409).json({ error: '用户名已存在' });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  const newUser = {
+    id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    username,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+  };
+  users.push(newUser);
+  saveUsers(users);
+
+  const token = jwt.sign({ userId: newUser.id, username: newUser.username }, JWT_SECRET, { expiresIn: '7d' });
+  res.status(201).json({ token, userId: newUser.id, username: newUser.username });
+});
+
+app.post('/api/user/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: '请提供用户名和密码' });
+  }
+
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) {
+    return res.status(401).json({ error: '用户名或密码错误' });
+  }
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: '用户名或密码错误' });
+  }
+
+  const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, userId: user.id, username: user.username });
+});
+
+app.post('/api/export', authenticateUser, async (req, res) => {
+  try {
+    const { topic, summary, photos, signPhoto } = req.body;
+    if (!topic || !summary) {
+      return res.status(400).json({ error: '请提供课题名称和总结' });
+    }
+
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const recordId = 'h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const zipFileName = `${topic}_${date}_${recordId}.zip`;
+    const userExportDir = path.join(exportsDir, req.user.userId);
+    if (!fs.existsSync(userExportDir)) {
+      fs.mkdirSync(userExportDir, { recursive: true });
+    }
+
+    const JSZip = require('jszip');
+    const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
+    const zip = new JSZip();
+    const folder = zip.folder(`${topic}_${date}`);
+
+    const cleanedSummary = summary.replace(/\*\*(.+?)\*\*/g, '$1').replace(/##+\s*/g, '').trim();
+    const paragraphs = cleanedSummary.split(/\n\s*\n/).filter(p => p.trim());
+
+    const docChildren = [
+      new Paragraph({
+        children: [new TextRun({ text: topic, bold: true, size: 32, font: '黑体' })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+      }),
+      new Paragraph({
+        children: [new TextRun({
+          text: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+          size: 24, font: '宋体', color: '888888',
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 },
+      }),
+    ];
+
+    for (const para of paragraphs) {
+      docChildren.push(new Paragraph({
+        children: [new TextRun({ text: para.trim(), size: 28, font: '宋体' })],
+        spacing: { after: 0, line: 360 },
+        indent: { firstLine: 480 },
+      }));
+    }
+
+    const doc = new Document({
+      sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } }, children: docChildren }],
+    });
+
+    const docxBuffer = await Packer.toBuffer(doc);
+    folder.file('学习成果总结.docx', docxBuffer);
+
+    if (photos && photos.length > 0) {
+      const photoFolder = folder.folder('场景照片');
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        const imgBuffer = Buffer.from(photo.data.split(',')[1], 'base64');
+        const ext = photo.name.endsWith('.png') ? 'png' : 'jpg';
+        photoFolder.file(`照片${i + 1}.${ext}`, imgBuffer);
+        if (photo.caption) {
+          photoFolder.file(`照片${i + 1}_说明.txt`, photo.caption);
+        }
+      }
+    }
+
+    if (signPhoto) {
+      const signFolder = folder.folder('签到表');
+      const signBuffer = Buffer.from(signPhoto.data.split(',')[1], 'base64');
+      const signExt = signPhoto.name.endsWith('.png') ? 'png' : 'jpg';
+      signFolder.file(`签到表.${signExt}`, signBuffer);
+    }
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+    const zipPath = path.join(userExportDir, zipFileName);
+    fs.writeFileSync(zipPath, zipBuffer);
+
+    const history = loadHistory();
+    const record = {
+      id: recordId,
+      userId: req.user.userId,
+      topic,
+      summary,
+      photoCount: photos ? photos.length : 0,
+      hasSignPhoto: !!signPhoto,
+      createdAt: new Date().toISOString(),
+      zipFileName,
+    };
+    history.push(record);
+    saveHistory(history);
+
+    res.json({ message: '导出成功', recordId, downloadUrl: `/api/export/${recordId}/download` });
+  } catch (error) {
+    console.error('Export error:', error.message);
+    res.status(500).json({ error: '导出失败: ' + error.message });
+  }
+});
+
+app.get('/api/export/:recordId/download', authenticateUser, (req, res) => {
+  const history = loadHistory();
+  const record = history.find(h => h.id === req.params.recordId && h.userId === req.user.userId);
+  if (!record) return res.status(404).json({ error: '记录不存在' });
+
+  const zipPath = path.join(exportsDir, req.user.userId, record.zipFileName);
+  if (!fs.existsSync(zipPath)) return res.status(404).json({ error: 'ZIP 文件已丢失' });
+
+  res.download(zipPath, record.zipFileName);
+});
+
+app.get('/api/history', authenticateUser, (req, res) => {
+  const history = loadHistory();
+  const userHistory = history
+    .filter(h => h.userId === req.user.userId)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json(userHistory);
+});
+
+app.delete('/api/history/:recordId', authenticateUser, (req, res) => {
+  const history = loadHistory();
+  const index = history.findIndex(h => h.id === req.params.recordId && h.userId === req.user.userId);
+  if (index === -1) return res.status(404).json({ error: '记录不存在' });
+
+  const record = history[index];
+  const zipPath = path.join(exportsDir, req.user.userId, record.zipFileName);
+  if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+
+  history.splice(index, 1);
+  saveHistory(history);
+  res.json({ message: '已删除' });
+});
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
