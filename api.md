@@ -151,6 +151,120 @@
   }
   ```
 
+## 用户认证
+
+### 用户注册
+
+**请求**
+- **URL**: `POST /api/register`
+- **请求体**:
+  ```json
+  {
+    "username": "zhangsan",
+    "password": "123456"
+  }
+  ```
+
+**响应**
+- **成功 (201)**:
+  ```json
+  {
+    "token": "eyJhbGci...",
+    "userId": "u_abc123",
+    "username": "zhangsan"
+  }
+  ```
+- **失败 (400)**: `{"error": "请提供用户名和密码"}` 或 `{"error": "密码至少6个字符"}`
+- **失败 (409)**: `{"error": "用户名已存在"}`
+
+### 用户登录
+
+**请求**
+- **URL**: `POST /api/user/login`
+- **请求体**:
+  ```json
+  {
+    "username": "zhangsan",
+    "password": "123456"
+  }
+  ```
+
+**响应**
+- **成功 (200)**: 同上
+- **失败 (401)**: `{"error": "用户名或密码错误"}`
+
+## 导出历史
+
+### 保存导出记录
+
+**请求**
+- **URL**: `POST /api/export`
+- **请求头**: `Authorization: Bearer <user_token>`
+- **请求体**:
+  ```json
+  {
+    "topic": "Python基础语法",
+    "summary": "学习成果总结...",
+    "photos": [
+      { "name": "photo1.jpg", "data": "data:image/jpeg;base64,...", "caption": "说明" }
+    ],
+    "signPhoto": { "name": "sign.jpg", "data": "data:image/jpeg;base64,..." }
+  }
+  ```
+
+**响应**
+- **成功 (200)**:
+  ```json
+  {
+    "message": "导出成功",
+    "recordId": "h_def456",
+    "downloadUrl": "/api/export/h_def456/download"
+  }
+  ```
+
+### 获取历史记录
+
+**请求**
+- **URL**: `GET /api/history`
+- **请求头**: `Authorization: Bearer <user_token>`
+
+**响应**
+- **成功 (200)**:
+  ```json
+  [
+    {
+      "id": "h_def456",
+      "userId": "u_abc123",
+      "topic": "Python基础语法",
+      "summary": "学习成果总结...",
+      "photoCount": 3,
+      "hasSignPhoto": true,
+      "createdAt": "2026-05-21T10:30:00.000Z",
+      "zipFileName": "Python基础语法_20260521_h_def456.zip"
+    }
+  ]
+  ```
+
+### 下载历史 ZIP
+
+**请求**
+- **URL**: `GET /api/export/:recordId/download`
+- **请求头**: `Authorization: Bearer <user_token>`
+
+**响应**: ZIP 文件下载
+
+### 删除历史记录
+
+**请求**
+- **URL**: `DELETE /api/history/:recordId`
+- **请求头**: `Authorization: Bearer <user_token>`
+
+**响应**
+- **成功 (200)**: `{"message": "已删除"}`
+- **失败 (404)**: `{"error": "记录不存在"}`
+
+---
+
 ## 错误码
 
 | HTTP 状态码 | 说明 |
