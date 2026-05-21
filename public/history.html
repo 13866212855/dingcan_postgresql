@@ -120,6 +120,14 @@
 
     .btn-danger:hover { background: #fee2e2; }
 
+    .btn-warning {
+      background: #fffbeb;
+      color: #d97706;
+      border: 1px solid #fde68a;
+    }
+
+    .btn-warning:hover { background: #fef3c7; }
+
     .actions {
       display: flex;
       gap: 0.5rem;
@@ -262,8 +270,11 @@
               📸 ${record.photoCount} 张照片 ${record.hasSignPhoto ? '· 📋 签到表' : ''}
             </div>
             <div class="actions">
-              <a href="/api/export/${record.id}/download" class="btn btn-primary">
+              <a href="/api/export/${record.id}/download?token=${userToken}" class="btn btn-primary">
                 📥 下载 ZIP
+              </a>
+              <a href="index.html?edit=${record.id}" class="btn btn-warning">
+                ✏️ 编辑
               </a>
               <button class="btn btn-danger" onclick="deleteRecord('${record.id}')">
                 🗑️ 删除

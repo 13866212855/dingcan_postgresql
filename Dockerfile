@@ -30,8 +30,8 @@ COPY --from=builder /app/data ./data
 # 设置目录权限给 node 用户
 RUN chown -R node:node /app
 
-# 切换到非 root 用户
-USER node
+# 切换到非 root 用户 (在 Windows 挂载环境下，为了防止 EACCES 权限问题，保持使用默认的 root 用户运行)
+# USER node
 
 # 暴露端口
 EXPOSE 3000

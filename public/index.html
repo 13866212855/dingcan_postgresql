@@ -277,6 +277,53 @@
     footer a { color: var(--primary); text-decoration: none; }
     footer a:hover { text-decoration: underline; }
 
+    .edit-banner {
+      background: linear-gradient(135deg, #fef3c7, #fde68a);
+      color: #92400e;
+      border: 1px solid #fcd34d;
+      padding: 1rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      animation: fadeInDown 0.3s ease;
+    }
+    @keyframes fadeInDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      gap: 1rem;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .loading-overlay .spinner {
+      width: 40px;
+      height: 40px;
+      border-width: 4px;
+      border-color: rgba(255,255,255,0.3);
+      border-top-color: var(--primary);
+    }
+
     @media (max-width: 640px) {
       .container { padding: 1rem; }
       .photo-grid { grid-template-columns: 1fr; }
@@ -285,6 +332,11 @@
   </style>
 </head>
 <body>
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <span class="spinner"></span>
+    <p style="font-size: 1.125rem; font-weight: 500;" id="loadingOverlayText">正在读取历史数据，请稍候...</p>
+  </div>
+
   <div class="container">
     <header>
       <h1>氛围编程 · 社团资料收集</h1>
@@ -303,6 +355,19 @@
     </header>
 
     <div id="validationMsg" class="validation-msg"></div>
+
+    <div id="editBanner" class="edit-banner hidden">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span style="font-size: 1.25rem;">✏️</span>
+        <div>
+          <div style="font-weight: 600;">正在编辑历史记录</div>
+          <div id="editRecordTitle" style="font-size: 0.875rem; opacity: 0.9;"></div>
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="cancelEdit()" style="font-size: 0.875rem; padding: 0.375rem 0.75rem; background: rgba(255,255,255,0.8); border: 1px solid rgba(0,0,0,0.1);">
+        取消编辑并新建
+      </button>
+    </div>
 
     <div class="card">
       <div class="card-title"><span class="icon">📝</span> 课题名称</div>
@@ -376,6 +441,12 @@
     const photoInput = document.getElementById('photoInput');
     const signDropZone = document.getElementById('signDropZone');
     const signInput = document.getElementById('signInput');
+
+    const editBanner = document.getElementById('editBanner');
+    const editRecordTitle = document.getElementById('editRecordTitle');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingOverlayText = document.getElementById('loadingOverlayText');
+    let editRecordId = new URLSearchParams(window.location.search).get('edit');
 
     document.getElementById('currentUser').textContent = username;
 
@@ -692,33 +763,180 @@
           }
 
           try {
-            await fetch('/api/export', {
+            const res = await fetch('/api/export', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${userToken}`,
               },
               body: JSON.stringify({
+                recordId: editRecordId || undefined,
                 topic,
                 summary,
                 photos: photosData,
                 signPhoto: signPhotoData,
               }),
             });
+            const data = await res.json();
+            if (data.error) {
+              showValidation(data.error, 'error');
+            } else {
+              showValidation(editRecordId ? '更新成功！已保存并返回历史记录' : '导出成功！已保存到历史记录', 'success');
+              if (editRecordId) {
+                setTimeout(() => {
+                  window.location.href = 'history.html';
+                }, 1500);
+              }
+            }
           } catch (e) {
             console.error('保存历史记录失败:', e);
+            showValidation('保存历史记录失败: ' + e.message, 'error');
           }
         };
         reader.readAsDataURL(content);
 
-        showValidation('导出成功！已保存到历史记录', 'success');
+        if (!editRecordId) {
+          showValidation('导出成功！已保存到历史记录', 'success');
+        }
       } catch (error) {
         showValidation('导出失败: ' + error.message, 'error');
       } finally {
         exportBtn.disabled = false;
-        exportBtn.innerHTML = '📦 导出为 ZIP 包';
+        exportBtn.innerHTML = editRecordId ? '💾 保存修改并导出 ZIP' : '📦 导出为 ZIP 包';
       }
     }
+
+    async function checkEditMode() {
+      if (!editRecordId) return;
+
+      editBanner.classList.remove('hidden');
+      exportBtn.innerHTML = '💾 保存修改并导出 ZIP';
+      exportBtn.style.background = 'linear-gradient(135deg, #3b82f6, #2563eb)';
+
+      loadingOverlay.classList.remove('hidden');
+      loadingOverlayText.textContent = '正在读取历史数据，请稍候...';
+
+      try {
+        const resHistory = await fetch('/api/history', {
+          headers: { 'Authorization': `Bearer ${userToken}` }
+        });
+        if (!resHistory.ok) throw new Error('拉取历史记录失败');
+        const historyList = await resHistory.json();
+        const record = historyList.find(h => h.id === editRecordId);
+        if (!record) {
+          showValidation('未找到该历史记录，已切换为新建模式', 'error');
+          cancelEdit();
+          return;
+        }
+
+        topicInput.value = record.topic;
+        summaryInput.value = record.summary;
+        editRecordTitle.textContent = record.topic;
+
+        loadingOverlayText.textContent = '正在下载并解压照片，这可能需要几秒钟...';
+        const resZip = await fetch(`/api/export/${editRecordId}/download`, {
+          headers: { 'Authorization': `Bearer ${userToken}` }
+        });
+        if (!resZip.ok) throw new Error('下载历史 ZIP 包失败');
+        const zipBlob = await resZip.blob();
+
+        loadingOverlayText.textContent = '正在解压并恢复照片...';
+        const zip = await JSZip.loadAsync(zipBlob);
+
+        photos.length = 0;
+        signPhoto = null;
+
+        const photoPromises = [];
+        const captionPromises = [];
+        let signPromise = null;
+
+        zip.forEach((relativePath, file) => {
+          if (relativePath.includes('场景照片/')) {
+            const filename = relativePath.split('场景照片/')[1];
+            if (!filename) return;
+
+            if (filename.endsWith('_说明.txt')) {
+              const baseName = filename.replace('_说明.txt', '');
+              captionPromises.push((async () => {
+                const text = await file.async('text');
+                return { baseName, text };
+              })());
+            } else if (filename.match(/\.(jpg|jpeg|png)$/i)) {
+              const baseName = filename.substring(0, filename.lastIndexOf('.'));
+              photoPromises.push((async () => {
+                const blob = await file.async('blob');
+                const fileObj = new File([blob], filename, { type: filename.endsWith('.png') ? 'image/png' : 'image/jpeg' });
+                return { baseName, file: fileObj, name: filename };
+              })());
+            }
+          } else if (relativePath.includes('签到表/')) {
+            const filename = relativePath.split('签到表/')[1];
+            if (filename && filename.match(/\.(jpg|jpeg|png)$/i)) {
+              signPromise = (async () => {
+                const blob = await file.async('blob');
+                const fileObj = new File([blob], filename, { type: filename.endsWith('.png') ? 'image/png' : 'image/jpeg' });
+                return { file: fileObj, originalName: filename };
+              })();
+            }
+          }
+        });
+
+        const [photoFiles, captions] = await Promise.all([
+          Promise.all(photoPromises),
+          Promise.all(captionPromises)
+        ]);
+
+        const captionMap = {};
+        captions.forEach(c => {
+          captionMap[c.baseName] = c.text;
+        });
+
+        photoFiles.forEach(pf => {
+          const caption = captionMap[pf.baseName] || '';
+          const id = Date.now() + Math.random();
+          photos.push({
+            id,
+            file: pf.file,
+            caption: caption,
+            originalName: pf.name
+          });
+        });
+
+        if (signPromise) {
+          signPhoto = await signPromise;
+        }
+
+        renderPhotos();
+        renderSign();
+
+      } catch (err) {
+        console.error('加载历史记录失败:', err);
+        showValidation('加载历史记录失败: ' + err.message, 'error');
+      } finally {
+        loadingOverlay.classList.add('hidden');
+      }
+    }
+
+    function cancelEdit() {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('edit');
+      window.history.replaceState({}, '', url.toString());
+      
+      editRecordId = null;
+      editBanner.classList.add('hidden');
+      topicInput.value = '';
+      summaryInput.value = '';
+      photos.length = 0;
+      signPhoto = null;
+      renderPhotos();
+      renderSign();
+      
+      exportBtn.innerHTML = '📦 导出为 ZIP 包';
+      exportBtn.style.background = '';
+    }
+
+    // 页面初始化时检查是否是编辑模式
+    checkEditMode();
   </script>
 </body>
 </html>

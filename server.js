@@ -100,7 +100,10 @@ function authenticateToken(req, res, next) {
 
 function authenticateUser(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  let token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    token = req.query.token;
+  }
   if (!token) return res.status(401).json({ error: '请先登录' });
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
@@ -161,17 +164,40 @@ app.post('/api/user/login', async (req, res) => {
 
 app.post('/api/export', authenticateUser, async (req, res) => {
   try {
-    const { topic, summary, photos, signPhoto } = req.body;
+    const { recordId: existingRecordId, topic, summary, photos, signPhoto } = req.body;
     if (!topic || !summary) {
       return res.status(400).json({ error: '请提供课题名称和总结' });
     }
 
+    const history = loadHistory();
+    let record = null;
+    let isEdit = false;
+
+    if (existingRecordId) {
+      record = history.find(h => h.id === existingRecordId && h.userId === req.user.userId);
+      if (record) {
+        isEdit = true;
+      }
+    }
+
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const recordId = 'h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const recordId = isEdit ? existingRecordId : ('h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
     const zipFileName = `${topic}_${date}_${recordId}.zip`;
     const userExportDir = path.join(exportsDir, req.user.userId);
     if (!fs.existsSync(userExportDir)) {
       fs.mkdirSync(userExportDir, { recursive: true });
+    }
+
+    // 如果是编辑模式，删除旧的 ZIP 文件
+    if (isEdit && record.zipFileName) {
+      const oldZipPath = path.join(userExportDir, record.zipFileName);
+      if (fs.existsSync(oldZipPath)) {
+        try {
+          fs.unlinkSync(oldZipPath);
+        } catch (err) {
+          console.error('删除旧 ZIP 失败:', err.message);
+        }
+      }
     }
 
     const JSZip = require('jszip');
@@ -237,21 +263,29 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     const zipPath = path.join(userExportDir, zipFileName);
     fs.writeFileSync(zipPath, zipBuffer);
 
-    const history = loadHistory();
-    const record = {
-      id: recordId,
-      userId: req.user.userId,
-      topic,
-      summary,
-      photoCount: photos ? photos.length : 0,
-      hasSignPhoto: !!signPhoto,
-      createdAt: new Date().toISOString(),
-      zipFileName,
-    };
-    history.push(record);
+    if (isEdit) {
+      record.topic = topic;
+      record.summary = summary;
+      record.photoCount = photos ? photos.length : 0;
+      record.hasSignPhoto = !!signPhoto;
+      record.zipFileName = zipFileName;
+      record.createdAt = new Date().toISOString(); // 更新修改时间
+    } else {
+      const newRecord = {
+        id: recordId,
+        userId: req.user.userId,
+        topic,
+        summary,
+        photoCount: photos ? photos.length : 0,
+        hasSignPhoto: !!signPhoto,
+        createdAt: new Date().toISOString(),
+        zipFileName,
+      };
+      history.push(newRecord);
+    }
     saveHistory(history);
 
-    res.json({ message: '导出成功', recordId, downloadUrl: `/api/export/${recordId}/download` });
+    res.json({ message: isEdit ? '更新成功' : '导出成功', recordId, downloadUrl: `/api/export/${recordId}/download` });
   } catch (error) {
     console.error('Export error:', error.message);
     res.status(500).json({ error: '导出失败: ' + error.message });
