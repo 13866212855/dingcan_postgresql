@@ -18,8 +18,7 @@ LABEL description="社团资料收集系统"
 
 WORKDIR /app
 
-# 创建非 root 用户
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# 使用 Alpine 镜像中自带的 node 用户 (UID 1000, GID 1000)
 
 # 从构建阶段复制依赖和代码
 COPY --from=builder /app/node_modules ./node_modules
@@ -28,11 +27,11 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/data ./data
 
-# 设置目录权限
-RUN chown -R appuser:appgroup /app
+# 设置目录权限给 node 用户
+RUN chown -R node:node /app
 
 # 切换到非 root 用户
-USER appuser
+USER node
 
 # 暴露端口
 EXPOSE 3000
