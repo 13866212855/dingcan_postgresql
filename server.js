@@ -6,7 +6,7 @@ const fs = require('fs');
 const OpenAI = require('openai');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'shetuandabao-secret-key-2024';
 
 app.use(cors());
