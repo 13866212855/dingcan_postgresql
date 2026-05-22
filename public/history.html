@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>历史记录 · 氛围编程</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     :root {
       --primary: #6366f1;
@@ -128,6 +129,13 @@
 
     .btn-warning:hover { background: #fef3c7; }
 
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-success:hover { background: #059669; }
+
     .actions {
       display: flex;
       gap: 0.5rem;
@@ -142,6 +150,11 @@
       border-top-color: white;
       border-radius: 50%;
       animation: spin 0.6s linear infinite;
+    }
+
+    .spinner-dark {
+      border-color: rgba(99,102,241,0.3);
+      border-top-color: var(--primary);
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -165,6 +178,147 @@
       color: var(--text-secondary);
     }
 
+    .import-bar {
+      text-align: center;
+      margin-bottom: 1.5rem;
+      padding: 1.5rem;
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      background: #fafafa;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .import-bar:hover {
+      border-color: var(--primary);
+      background: #f0f0ff;
+    }
+
+    .import-bar .icon {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .import-bar p {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 9998;
+    }
+
+    .modal {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 600px;
+      width: 90%;
+      z-index: 9999;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      animation: fadeInModal 0.2s ease;
+    }
+
+    @keyframes fadeInModal {
+      from { opacity: 0; transform: translate(-50%, -45%); }
+      to { opacity: 1; transform: translate(-50%, -50%); }
+    }
+
+    .modal h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .modal .modal-subtitle {
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .modal .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .modal label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 0.375rem;
+    }
+
+    .modal input[type="text"],
+    .modal textarea {
+      width: 100%;
+      padding: 0.625rem 0.875rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .modal input[type="text"]:focus,
+    .modal textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .modal textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .modal .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      font-size: 0.875rem;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .modal .info-row .label {
+      color: var(--text-secondary);
+    }
+
+    .modal .info-row .value {
+      font-weight: 500;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .modal-actions .btn {
+      flex: 1;
+      padding: 0.75rem;
+    }
+
+    .modal-loading {
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .modal-loading p {
+      margin-top: 1rem;
+      color: var(--text-secondary);
+    }
+
     footer {
       text-align: center;
       padding: 2rem 0;
@@ -179,6 +333,7 @@
       .container { padding: 1rem; }
       .nav-bar { flex-direction: column; gap: 1rem; align-items: stretch; }
       .actions { flex-direction: column; }
+      .modal { padding: 1.5rem; }
     }
   </style>
 </head>
@@ -196,8 +351,14 @@
       </span>
     </div>
 
+    <div class="import-bar" onclick="document.getElementById('zipFileInput').click()">
+      <div class="icon">📤</div>
+      <p>点击选择 ZIP 文件，导入到历史记录</p>
+      <input type="file" id="zipFileInput" accept=".zip" hidden>
+    </div>
+
     <div id="loading" class="loading">
-      <span class="spinner" style="border-color: rgba(99,102,241,0.3); border-top-color: var(--primary);"></span>
+      <span class="spinner spinner-dark"></span>
       <p style="margin-top: 1rem;">加载中...</p>
     </div>
 
@@ -208,6 +369,54 @@
       <p style="font-size: 1.125rem; margin-bottom: 0.5rem;">暂无历史记录</p>
       <p style="font-size: 0.875rem; margin-bottom: 1.5rem;">去收集资料并导出第一个 ZIP 包吧</p>
       <a href="index.html" class="btn btn-primary">去收集资料</a>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="hidden">
+      <div class="modal-backdrop" onclick="closeImportModal()"></div>
+      <div class="modal">
+        <div id="importModalLoading">
+          <div class="modal-loading">
+            <span class="spinner spinner-dark" style="width: 32px; height: 32px; border-width: 3px;"></span>
+            <p>正在解析 ZIP 文件...</p>
+          </div>
+        </div>
+        <div id="importModalForm" class="hidden">
+          <h3>📤 导入 ZIP 包</h3>
+          <p class="modal-subtitle">已解析成功，请确认以下信息后导入</p>
+
+          <div class="form-group">
+            <label>课题名称</label>
+            <input type="text" id="importTopic" placeholder="请输入课题名称">
+          </div>
+
+          <div class="info-row">
+            <span class="label">📸 场景照片</span>
+            <span class="value" id="importPhotoCount">0 张</span>
+          </div>
+          <div class="info-row">
+            <span class="label">📋 签到表</span>
+            <span class="value" id="importSignStatus">无</span>
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>学习成果总结</label>
+            <textarea id="importSummary" placeholder="将从 ZIP 中提取总结内容..."></textarea>
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>教学过程描述</label>
+            <textarea id="importTeachingProcess" placeholder="将从 ZIP 中提取教学过程..."></textarea>
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeImportModal()">取消</button>
+            <button class="btn btn-success" id="confirmImportBtn" onclick="confirmImport()">
+              确认导入
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <footer>
@@ -224,6 +433,11 @@
     }
 
     document.getElementById('currentUser').textContent = username;
+
+    // ====== Import ZIP state ======
+    let importData = null;
+
+    // ====== History list ======
 
     async function loadHistory() {
       const loading = document.getElementById('loading');
@@ -314,7 +528,7 @@
         }
 
         if (card) card.remove();
-        
+
         const list = document.getElementById('historyList');
         if (list.children.length === 0) {
           list.classList.add('hidden');
@@ -327,6 +541,270 @@
           card.style.pointerEvents = 'auto';
         }
       }
+    }
+
+    // ====== Import ZIP logic ======
+
+    document.getElementById('zipFileInput').addEventListener('change', function(e) {
+      if (this.files && this.files[0]) {
+        handleImportZip(this.files[0]);
+      }
+      this.value = '';
+    });
+
+    async function handleImportZip(file) {
+      showImportModal(true);
+
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const entries = Object.keys(zip.files);
+
+        // Find root folder (first directory in ZIP)
+        const dirs = entries.filter(k => k.endsWith('/'));
+        const rootFolder = dirs[0] || '';
+        const folderName = rootFolder.replace('/', '');
+
+        // Extract topic from folder name (remove date suffix)
+        let topic = folderName;
+        const dateMatch = folderName.match(/^(.+)_\d{8}$/);
+        if (dateMatch) {
+          topic = dateMatch[1];
+        }
+
+        // Extract photos, captions, sign photo, docx
+        const photos = [];
+        const captionMap = {};
+        let signPhotoData = null;
+        let docxFile = null;
+        let processDocxFile = null;
+        let photoCount = 0;
+        let hasSign = false;
+
+        // First pass: collect all captions (说明文本必须优先收集)
+        for (const [path, fileEntry] of Object.entries(zip.files)) {
+          if (fileEntry.dir) continue;
+          const relativePath = rootFolder ? path.replace(rootFolder, '') : path;
+          if (relativePath.includes('场景照片/')) {
+            const filename = relativePath.split('场景照片/')[1];
+            if (filename && filename.endsWith('_说明.txt')) {
+              const baseName = filename.replace('_说明.txt', '');
+              captionMap[baseName] = await fileEntry.async('text');
+            }
+          }
+        }
+
+        // Second pass: collect photos, sign, docx (此时 captionMap 已完整)
+        for (const [path, fileEntry] of Object.entries(zip.files)) {
+          if (fileEntry.dir) continue;
+
+          const relativePath = rootFolder ? path.replace(rootFolder, '') : path;
+
+          if (relativePath.includes('场景照片/')) {
+            const filename = relativePath.split('场景照片/')[1];
+            if (!filename) continue;
+            if (filename.match(/\.(jpg|jpeg|png)$/i)) {
+              const blob = await fileEntry.async('blob');
+              const baseName = filename.substring(0, filename.lastIndexOf('.'));
+              photos.push({
+                baseName,
+                blob,
+                name: filename,
+                caption: captionMap[baseName] || ''
+              });
+              photoCount++;
+            }
+          } else if (relativePath.includes('签到表/')) {
+            const filename = relativePath.split('签到表/')[1];
+            if (filename && filename.match(/\.(jpg|jpeg|png)$/i)) {
+              const blob = await fileEntry.async('blob');
+              signPhotoData = { blob, name: filename };
+              hasSign = true;
+            }
+          } else if (relativePath === '学习成果总结.docx') {
+            docxFile = fileEntry;
+          } else if (relativePath === '教学过程设计.docx') {
+            processDocxFile = fileEntry;
+          }
+        }
+
+        // Parse docx for summary text
+        let summary = '';
+        if (docxFile) {
+          try {
+            const docxData = await docxFile.async('uint8array');
+            const docxZip = await JSZip.loadAsync(docxData);
+            const docXmlEntry = docxZip.file('word/document.xml');
+            if (docXmlEntry) {
+              const xmlText = await docXmlEntry.async('text');
+              summary = extractDocxText(xmlText);
+            }
+          } catch (e) {
+            console.warn('docx 解析失败:', e);
+          }
+        }
+
+        // Parse docx for teaching process text
+        let teachingProcess = '';
+        if (processDocxFile) {
+          try {
+            const docxData = await processDocxFile.async('uint8array');
+            const docxZip = await JSZip.loadAsync(docxData);
+            const docXmlEntry = docxZip.file('word/document.xml');
+            if (docXmlEntry) {
+              const xmlText = await docXmlEntry.async('text');
+              teachingProcess = extractDocxText(xmlText);
+            }
+          } catch (e) {
+            console.warn('教学过程 docx 解析失败:', e);
+          }
+        }
+
+        // If no topic from folder, use filename without extension
+        if (!topic && file.name) {
+          topic = file.name.replace(/\.zip$/i, '');
+        }
+
+        // Store for confirmation
+        importData = { topic, summary, teachingProcess, photos, signPhoto: signPhotoData };
+
+        // Show confirmation form
+        document.getElementById('importTopic').value = topic;
+        document.getElementById('importSummary').value = summary;
+        document.getElementById('importTeachingProcess').value = teachingProcess;
+        document.getElementById('importPhotoCount').textContent = photoCount + ' 张';
+        document.getElementById('importSignStatus').textContent = hasSign ? '✅ 已上传' : '❌ 无';
+
+        showImportModal(false);
+
+      } catch (error) {
+        alert('ZIP 解析失败: ' + error.message);
+        closeImportModal();
+      }
+    }
+
+    function extractDocxText(xmlText) {
+      const paragraphs = xmlText.split('</w:p>').map(p => {
+        const matches = p.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
+        if (!matches) return '';
+        return matches.map(m => m.replace(/<\/?w:t[^>]*>/g, '')).join('');
+      }).filter(p => p.trim());
+      return paragraphs.join('\n\n');
+    }
+
+    function blobToBase64(blob) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function confirmImport() {
+      if (!importData) return;
+
+      const btn = document.getElementById('confirmImportBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> 导入中...';
+
+      const topic = document.getElementById('importTopic').value.trim();
+      const summary = document.getElementById('importSummary').value.trim();
+      const teachingProcess = document.getElementById('importTeachingProcess').value.trim();
+
+      if (!topic) {
+        alert('请填写课题名称');
+        btn.disabled = false;
+        btn.textContent = '确认导入';
+        return;
+      }
+      if (!summary) {
+        alert('学习成果总结不能为空，请手动填写或取消导入');
+        btn.disabled = false;
+        btn.textContent = '确认导入';
+        return;
+      }
+      if (!teachingProcess) {
+        alert('教学过程描述不能为空，请手动填写或取消导入');
+        btn.disabled = false;
+        btn.textContent = '确认导入';
+        return;
+      }
+
+      try {
+        // Convert blobs to base64
+        const photosData = [];
+        for (const photo of importData.photos) {
+          photosData.push({
+            name: photo.name,
+            data: await blobToBase64(photo.blob),
+            caption: photo.caption
+          });
+        }
+
+        let signPhotoPayload = null;
+        if (importData.signPhoto) {
+          signPhotoPayload = {
+            name: importData.signPhoto.name,
+            data: await blobToBase64(importData.signPhoto.blob),
+          };
+        }
+
+        if (photosData.length < 2) {
+          alert('场景照片不足2张，请确认 ZIP 文件包含至少2张照片');
+          btn.disabled = false;
+          btn.textContent = '确认导入';
+          return;
+        }
+
+        const res = await fetch('/api/export', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${userToken}`,
+          },
+          body: JSON.stringify({
+            topic,
+            summary,
+            teachingProcess,
+            photos: photosData,
+            signPhoto: signPhotoPayload,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.error) {
+          alert('导入失败: ' + data.error);
+          btn.disabled = false;
+          btn.textContent = '确认导入';
+          return;
+        }
+
+        closeImportModal();
+        loadHistory();
+        alert('导入成功！记录已添加到历史列表中，您可以点击"编辑"进行修改。');
+
+      } catch (error) {
+        alert('导入失败: ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '确认导入';
+        importData = null;
+      }
+    }
+
+    function showImportModal(loading) {
+      document.getElementById('importModal').classList.remove('hidden');
+      if (loading) {
+        document.getElementById('importModalLoading').classList.remove('hidden');
+        document.getElementById('importModalForm').classList.add('hidden');
+      } else {
+        document.getElementById('importModalLoading').classList.add('hidden');
+        document.getElementById('importModalForm').classList.remove('hidden');
+      }
+    }
+
+    function closeImportModal() {
+      document.getElementById('importModal').classList.add('hidden');
+      importData = null;
     }
 
     loadHistory();

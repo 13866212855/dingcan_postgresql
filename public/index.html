@@ -407,6 +407,16 @@
     </div>
 
     <div class="card">
+      <div class="card-title"><span class="icon">📋</span> 教学过程描述</div>
+      <textarea id="teachingProcess" placeholder="AI将根据学习成果总结生成教学过程描述，您也可以手动编辑..."></textarea>
+      <div class="actions">
+        <button class="btn btn-ai" id="aiProcessBtn" onclick="generateTeachingProcess()">
+          ✨ AI 生成教学过程
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
       <button class="btn btn-success" id="exportBtn" onclick="exportZip()">
         📦 导出为 ZIP 包
       </button>
@@ -436,6 +446,8 @@
     const validationMsg = document.getElementById('validationMsg');
     const exportBtn = document.getElementById('exportBtn');
     const aiBtn = document.getElementById('aiBtn');
+    const teachingProcessInput = document.getElementById('teachingProcess');
+    const aiProcessBtn = document.getElementById('aiProcessBtn');
 
     const photoDropZone = document.getElementById('photoDropZone');
     const photoInput = document.getElementById('photoInput');
@@ -609,6 +621,49 @@
       }
     }
 
+    async function generateTeachingProcess() {
+      const topic = topicInput.value.trim();
+      const summary = summaryInput.value.trim();
+      if (!topic) {
+        showValidation('请先填写课题名称', 'error');
+        return;
+      }
+      if (!summary) {
+        showValidation('请先填写学习成果总结', 'error');
+        return;
+      }
+
+      aiProcessBtn.disabled = true;
+      aiProcessBtn.innerHTML = '<span class="spinner"></span> 生成中...';
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        if (!token) {
+          showValidation('请先在管理后台登录并配置大模型', 'error');
+          return;
+        }
+
+        const response = await fetch('/api/llm/generate-process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ topic, summary }),
+        });
+
+        const data = await response.json();
+        if (data.error) {
+          showValidation(data.error, 'error');
+        } else {
+          teachingProcessInput.value = data.process;
+          showValidation('教学过程已生成，您可以编辑修改', 'success');
+        }
+      } catch (error) {
+        showValidation('AI 生成失败，请检查网络连接', 'error');
+      } finally {
+        aiProcessBtn.disabled = false;
+        aiProcessBtn.innerHTML = '✨ AI 生成教学过程';
+      }
+    }
+
     function cleanMarkdown(text) {
       return text
         .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -695,11 +750,13 @@
     async function exportZip() {
       const topic = topicInput.value.trim();
       const summary = summaryInput.value.trim();
+      const teachingProcess = teachingProcessInput.value.trim();
 
       if (!topic) { showValidation('请填写课题名称', 'error'); return; }
       if (photos.length < 2) { showValidation('请上传至少2张场景照片', 'error'); return; }
       if (!signPhoto) { showValidation('请上传签到表', 'error'); return; }
       if (!summary) { showValidation('请填写学习成果总结', 'error'); return; }
+      if (!teachingProcess) { showValidation('请填写教学过程描述', 'error'); return; }
 
       exportBtn.disabled = true;
       exportBtn.innerHTML = '<span class="spinner"></span> 正在打包...';
@@ -712,6 +769,9 @@
 
         const docxBlob = await createDocxBlob(summary, topic);
         folder.file('学习成果总结.docx', docxBlob);
+
+        const processDocxBlob = await createDocxBlob(teachingProcess, topic + ' - 教学过程设计');
+        folder.file('教学过程设计.docx', processDocxBlob);
 
         const photoFolder = folder.folder('场景照片');
         for (let i = 0; i < photos.length; i++) {
@@ -773,6 +833,7 @@
                 recordId: editRecordId || undefined,
                 topic,
                 summary,
+                teachingProcess,
                 photos: photosData,
                 signPhoto: signPhotoData,
               }),
@@ -831,6 +892,7 @@
 
         topicInput.value = record.topic;
         summaryInput.value = record.summary;
+        teachingProcessInput.value = record.teachingProcess || '';
         editRecordTitle.textContent = record.topic;
 
         loadingOverlayText.textContent = '正在下载并解压照片，这可能需要几秒钟...';
@@ -926,6 +988,7 @@
       editBanner.classList.add('hidden');
       topicInput.value = '';
       summaryInput.value = '';
+      teachingProcessInput.value = '';
       photos.length = 0;
       signPhoto = null;
       renderPhotos();

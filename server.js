@@ -164,9 +164,12 @@ app.post('/api/user/login', async (req, res) => {
 
 app.post('/api/export', authenticateUser, async (req, res) => {
   try {
-    const { recordId: existingRecordId, topic, summary, photos, signPhoto } = req.body;
+    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto } = req.body;
     if (!topic || !summary) {
       return res.status(400).json({ error: '请提供课题名称和总结' });
+    }
+    if (!teachingProcess) {
+      return res.status(400).json({ error: '请提供教学过程描述' });
     }
 
     const history = loadHistory();
@@ -239,6 +242,40 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     const docxBuffer = await Packer.toBuffer(doc);
     folder.file('学习成果总结.docx', docxBuffer);
 
+    const cleanedProcess = teachingProcess.replace(/\*\*(.+?)\*\*/g, '$1').replace(/##+\s*/g, '').trim();
+    const processParagraphs = cleanedProcess.split(/\n\s*\n/).filter(p => p.trim());
+
+    const processDocChildren = [
+      new Paragraph({
+        children: [new TextRun({ text: topic + ' - 教学过程设计', bold: true, size: 32, font: '黑体' })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+      }),
+      new Paragraph({
+        children: [new TextRun({
+          text: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+          size: 24, font: '宋体', color: '888888',
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 },
+      }),
+    ];
+
+    for (const para of processParagraphs) {
+      processDocChildren.push(new Paragraph({
+        children: [new TextRun({ text: para.trim(), size: 28, font: '宋体' })],
+        spacing: { after: 0, line: 360 },
+        indent: { firstLine: 480 },
+      }));
+    }
+
+    const processDoc = new Document({
+      sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } }, children: processDocChildren }],
+    });
+
+    const processDocxBuffer = await Packer.toBuffer(processDoc);
+    folder.file('教学过程设计.docx', processDocxBuffer);
+
     if (photos && photos.length > 0) {
       const photoFolder = folder.folder('场景照片');
       for (let i = 0; i < photos.length; i++) {
@@ -266,16 +303,18 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     if (isEdit) {
       record.topic = topic;
       record.summary = summary;
+      record.teachingProcess = teachingProcess;
       record.photoCount = photos ? photos.length : 0;
       record.hasSignPhoto = !!signPhoto;
       record.zipFileName = zipFileName;
-      record.createdAt = new Date().toISOString(); // 更新修改时间
+      record.createdAt = new Date().toISOString();
     } else {
       const newRecord = {
         id: recordId,
         userId: req.user.userId,
         topic,
         summary,
+        teachingProcess,
         photoCount: photos ? photos.length : 0,
         hasSignPhoto: !!signPhoto,
         createdAt: new Date().toISOString(),
@@ -403,6 +442,62 @@ app.post('/api/llm/summarize', authenticateToken, async (req, res) => {
 
     const summary = response.choices[0]?.message?.content || '';
     res.json({ summary });
+  } catch (error) {
+    console.error('LLM API Error:', error.message);
+    res.status(500).json({ error: `大模型调用失败: ${error.message}` });
+  }
+});
+
+app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
+  try {
+    const { topic, summary } = req.body;
+    if (!topic) return res.status(400).json({ error: '请提供课题内容' });
+    if (!summary) return res.status(400).json({ error: '请提供学习成果总结' });
+
+    const config = loadConfig();
+    if (!config.api_key) {
+      return res.status(400).json({ error: '请先在管理后台配置大模型 API Key' });
+    }
+
+    const openai = new OpenAI({
+      apiKey: config.api_key,
+      baseURL: config.base_url,
+    });
+
+    const response = await openai.chat.completions.create({
+      model: config.model_name,
+      messages: [
+        {
+          role: 'system',
+          content: `你是一位农村高中信息技术教师。请根据用户提供的课题内容和学习成果总结，生成一份详细的教学过程描述。
+
+要求：
+1. 不要使用任何Markdown格式（不要用**、##、*等符号）
+2. 语言朴实自然，像一线教师手写的教学设计，不要有AI腔调
+3. 内容控制在500字以内
+4. 结合农村高中学生的实际情况，不要写得太高端
+5. 用纯文本段落形式输出，不要分标题
+6. 教学过程应包含以下环节：课堂导入、新课讲授、学生实践操作、总结评价
+7. 必须参考学习成果总结中的具体信息来设计教学过程，不能仅从课题标题凭空生成
+
+输出格式示例：
+本节课首先通过XXX案例/问题导入，激发学生学习兴趣。在新课讲授环节，教师通过XXX方式讲解XXX知识点，学生能较好地理解XXX。实践操作环节，学生分组完成了XXX任务，教师巡视指导了XXX方面的问题。最后通过XXX方式进行总结评价，大部分学生达到了学习目标。`,
+        },
+        {
+          role: 'user',
+          content: `本次社团活动的课题是：${topic}。
+
+学生的学习成果总结：${summary}
+
+请根据以上内容生成教学过程描述。`,
+        },
+      ],
+      temperature: config.temperature,
+      max_tokens: config.max_tokens,
+    });
+
+    const process = response.choices[0]?.message?.content || '';
+    res.json({ process });
   } catch (error) {
     console.error('LLM API Error:', error.message);
     res.status(500).json({ error: `大模型调用失败: ${error.message}` });
