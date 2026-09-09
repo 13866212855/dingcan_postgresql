@@ -1,0 +1,6 @@
+{
+  "name": "小饭店点餐系统",
+  "description": "支持多租户架构与严格数据隔离的手机扫码点餐、餐桌管理、连锁分店运营与/admin后台管理系统",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

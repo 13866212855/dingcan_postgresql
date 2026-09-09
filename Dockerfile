@@ -1,0 +1,25 @@
+FROM node:20-bookworm
+
+WORKDIR /app
+
+# 复制依赖声明文件
+COPY package*.json ./
+
+# 安装依赖
+RUN npm install
+
+# 复制所有项目源文件
+COPY . .
+
+# 设置环境变量
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# 编译 Next.js
+RUN npm run build
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动命令
+CMD ["npm", "run", "start"]
