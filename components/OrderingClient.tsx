@@ -118,6 +118,13 @@ export default function OrderingClient({
     }
   }, [currentTable, setCurrentTable]);
 
+  // 当后台没有配置任何桌位时，若本地仍缓存了旧的“自取/未指定桌位”，自动清理以保持纯净
+  useEffect(() => {
+    if (!isTableLocked && currentTable === '自取/未指定桌位') {
+      setCurrentTable('');
+    }
+  }, [isTableLocked, currentTable, setCurrentTable]);
+
   // Persist current active tenant to storage & cookie for seamless navigation
   useEffect(() => {
     if (typeof window !== 'undefined' && tenantId) {
@@ -402,6 +409,7 @@ export default function OrderingClient({
       <Navbar
         currentTable={currentTable}
         isTableLocked={isTableLocked}
+        hasTables={allTables.length > 0}
         onChangeTable={() => {
           fetchFreeTables();
           setIsTableModalOpen(true);
@@ -630,7 +638,9 @@ export default function OrderingClient({
                   <span className="text-amber-400">¥{totalPrice.toFixed(2)}</span>
                 </div>
                 <div className="text-[11px] text-neutral-400">
-                  {currentTable ? `当前桌号: ${currentTable}` : '到店堂食 / 外卖送餐'}
+                  {currentTable && currentTable !== '自取/未指定桌位'
+                    ? `当前桌号: ${currentTable}`
+                    : (allTables.length > 0 ? '到店堂食 / 外卖送餐' : '现点现做 · 美味即享')}
                 </div>
               </div>
             </div>

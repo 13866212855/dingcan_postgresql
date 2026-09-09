@@ -203,8 +203,8 @@ export default function CartDrawer({
       }
       onChangeTable(
         showTableSection
-          ? (table || '自取/未指定桌位')
-          : (isTableLocked ? (currentTable || '自取/未指定桌位') : '自取/未指定桌位')
+          ? (table || '')
+          : (isTableLocked ? (currentTable || '') : '')
       );
     } else {
       if (!deliveryAddress.trim()) {
@@ -225,8 +225,8 @@ export default function CartDrawer({
       const finalTableNo =
         orderType === '堂食'
           ? (showTableSection
-              ? (selectedTable.trim() || '自取/未指定桌位')
-              : (isTableLocked ? (currentTable || '自取/未指定桌位') : '自取/未指定桌位'))
+              ? (selectedTable.trim() || '')
+              : (isTableLocked ? (currentTable || '') : ''))
           : '外卖送餐';
 
       // 汇总各餐品所选口味属性

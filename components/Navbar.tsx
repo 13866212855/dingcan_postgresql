@@ -9,6 +9,7 @@ import { AppUser } from '@/types';
 interface NavbarProps {
   currentTable: string;
   isTableLocked?: boolean;
+  hasTables?: boolean;
   onChangeTable: () => void;
   onOpenOrders: () => void;
   onOpenMemberModal?: () => void;
@@ -23,6 +24,7 @@ interface NavbarProps {
 export default function Navbar({
   currentTable,
   isTableLocked = false,
+  hasTables = true,
   onChangeTable,
   onOpenOrders,
   onOpenMemberModal,
@@ -78,25 +80,27 @@ export default function Navbar({
 
         {/* Right Action buttons */}
         <div className="flex items-center space-x-2">
-          {/* Table Badge */}
-          <button
-            id="btn-change-table"
-            onClick={onChangeTable}
-            title={isTableLocked ? '扫码入座锁定中' : '点击切换桌号'}
-            className={`flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ${
-              isTableLocked
-                ? 'bg-amber-100 text-amber-900 border-amber-300'
-                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5 text-amber-600" />
-            <span>{currentTable ? currentTable : '选择桌号'}</span>
-            {isTableLocked && (
-              <span className="text-[10px] bg-amber-200 text-amber-900 px-1 py-0.2 rounded font-normal">
-                已扫码
-              </span>
-            )}
-          </button>
+          {/* Table Badge: 当后台无设置桌位时完全隐藏，界面更简洁；有桌位或扫码锁定时才显示 */}
+          {(hasTables || isTableLocked) && (
+            <button
+              id="btn-change-table"
+              onClick={onChangeTable}
+              title={isTableLocked ? '扫码入座锁定中' : '点击切换桌号'}
+              className={`flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ${
+                isTableLocked
+                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+              }`}
+            >
+              <MapPin className="w-3.5 h-3.5 text-amber-600" />
+              <span>{currentTable && currentTable !== '自取/未指定桌位' ? currentTable : '选择桌号'}</span>
+              {isTableLocked && (
+                <span className="text-[10px] bg-amber-200 text-amber-900 px-1 py-0.2 rounded font-normal">
+                  已扫码
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Member & Points button */}
           {onOpenMemberModal && (

@@ -1148,7 +1148,7 @@ export default function AdminPage() {
                               ) : (
                                 <>
                                   <MapPin className="w-3.5 h-3.5 text-amber-700" />
-                                  <span>{order.table_no}</span>
+                                  <span>{order.table_no || '堂食/自取'}</span>
                                 </>
                               )}
                             </span>
@@ -1545,7 +1545,7 @@ export default function AdminPage() {
             <div className="p-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/80">
               <div>
                 <h3 className="text-sm font-bold text-neutral-900">
-                  订单详情 · {selectedOrderDetail.order_type === '外卖' ? '送餐外卖' : selectedOrderDetail.table_no}
+                  订单详情 · {selectedOrderDetail.order_type === '外卖' ? '送餐外卖' : (selectedOrderDetail.table_no || '堂食/自取')}
                 </h3>
                 <span className="text-[10px] text-neutral-400 font-mono">
                   {selectedOrderDetail.id}
