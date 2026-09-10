@@ -118,12 +118,14 @@ export default function OrderingClient({
     }
   }, [currentTable, setCurrentTable]);
 
-  // 当后台没有配置任何桌位时，若本地仍缓存了旧的“自取/未指定桌位”，自动清理以保持纯净
+  // 当后台没有配置任何餐桌时，自动清空桌号缓存以确保界面纯净不残留
   useEffect(() => {
-    if (!isTableLocked && currentTable === '自取/未指定桌位') {
-      setCurrentTable('');
+    if (allTables.length === 0 || currentTable === '自取/未指定桌位') {
+      if (currentTable) {
+        setCurrentTable('');
+      }
     }
-  }, [isTableLocked, currentTable, setCurrentTable]);
+  }, [allTables.length, currentTable, setCurrentTable]);
 
   // Persist current active tenant to storage & cookie for seamless navigation
   useEffect(() => {
@@ -155,13 +157,11 @@ export default function OrderingClient({
                 { signal: abortController.signal }
               )
             : Promise.resolve(null),
-          // Only fetch tables if empty or tenant changed
-          initialTables.length === 0 || tenantId !== initialTenantId
-            ? safeFetchJson<{ success: boolean; data: DiningTable[] }>(
-                `/api/tables?tenant=${encodeURIComponent(tenantId)}`,
-                { signal: abortController.signal }
-              )
-            : Promise.resolve(null),
+          // Always fetch current tables to ensure accurate table count and status
+          safeFetchJson<{ success: boolean; data: DiningTable[] }>(
+            `/api/tables?tenant=${encodeURIComponent(tenantId)}`,
+            { signal: abortController.signal }
+          ),
         ]);
 
         if (!isMounted || abortController.signal.aborted) return;
@@ -411,6 +411,7 @@ export default function OrderingClient({
         isTableLocked={isTableLocked}
         hasTables={allTables.length > 0}
         onChangeTable={() => {
+          if (allTables.length === 0) return;
           fetchFreeTables();
           setIsTableModalOpen(true);
         }}
@@ -425,7 +426,7 @@ export default function OrderingClient({
       />
 
       {/* QR Code Desk Announcement Banner */}
-      {isTableLocked && (
+      {isTableLocked && allTables.length > 0 && currentTable && (
         <div className="bg-amber-500 text-white text-xs py-2 px-4 shadow-xs">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center space-x-2">

@@ -85,3 +85,22 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const tenantId = getTenantIdFromRequest(req);
+    const pool = await (await import('@/lib/db')).ensureDatabase();
+    await pool.query('DELETE FROM tables WHERE tenant_id = $1', [tenantId]);
+    return NextResponse.json({
+      success: true,
+      message: '所有餐桌已成功清空',
+      tenantId,
+    });
+  } catch (error: any) {
+    console.error('Failed to clear tables:', error);
+    return NextResponse.json(
+      { success: false, error: '清空餐桌失败: ' + (error?.message || '') },
+      { status: 500 }
+    );
+  }
+}

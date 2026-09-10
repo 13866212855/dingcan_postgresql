@@ -295,6 +295,23 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
     }
   };
 
+  const handleClearAllTables = async () => {
+    if (!confirm('确定要清空后台所有餐桌吗？\n清空后，前端点餐首页将自动隐藏【选择桌号】按钮，界面保持清爽整洁。')) return;
+    try {
+      const res = await fetch(`/api/tables?tenant=${encodeURIComponent(tenantId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchTables();
+      } else {
+        alert(data.error || '清空失败');
+      }
+    } catch (err: any) {
+      alert('清空失败: ' + err.message);
+    }
+  };
+
   const getTableUrl = (name: string) => {
     let base = customDomain?.trim();
     if (!base) {
@@ -345,6 +362,16 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>刷新</span>
           </button>
+          {tables.length > 0 && (
+            <button
+              onClick={handleClearAllTables}
+              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1 border border-rose-200"
+              title="一键清空所有桌位（清空后前台点餐首页将自动隐藏【选择桌号】按钮）"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>清空所有餐桌</span>
+            </button>
+          )}
           <button
             onClick={() => {
               setBatchMsg('');
@@ -505,6 +532,40 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center space-x-2">
           <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Empty State: 当未配置任何餐桌时展示说明 */}
+      {!loading && tables.length === 0 && (
+        <div className="bg-white rounded-2xl border border-dashed border-neutral-300 p-8 text-center space-y-3 shadow-2xs">
+          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+            <MapPin className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-sm font-bold text-neutral-800">当前门店未配置任何餐桌</h4>
+            <p className="text-xs text-neutral-500 max-w-md mx-auto">
+              前端顾客点餐首页已<strong>自动彻底隐藏【选择桌号】按钮</strong>，界面保持清爽整洁；顾客下单将直接按自取/默认处理。
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 pt-2">
+            <button
+              onClick={() => {
+                setBatchMsg('');
+                setIsBatchModalOpen(true);
+              }}
+              className="px-3.5 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-600" />
+              <span>批量生成桌号</span>
+            </button>
+            <button
+              onClick={handleOpenAdd}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              <span>添加新餐桌</span>
+            </button>
+          </div>
         </div>
       )}
 

@@ -24,7 +24,7 @@ interface NavbarProps {
 export default function Navbar({
   currentTable,
   isTableLocked = false,
-  hasTables = true,
+  hasTables = false,
   onChangeTable,
   onOpenOrders,
   onOpenMemberModal,
@@ -80,8 +80,8 @@ export default function Navbar({
 
         {/* Right Action buttons */}
         <div className="flex items-center space-x-2">
-          {/* Table Badge: 当后台无设置桌位时完全隐藏，界面更简洁；有桌位或扫码锁定时才显示 */}
-          {(hasTables || isTableLocked) && (
+          {/* Table Badge: 当后台无设置桌位时完全隐藏，界面更简洁；仅当后台配置了餐桌或顾客扫码入座时才显示 */}
+          {(hasTables || (isTableLocked && Boolean(currentTable))) && (
             <button
               id="btn-change-table"
               onClick={onChangeTable}

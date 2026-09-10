@@ -4,7 +4,7 @@ import { Dish, OrderItem, Order, DiningTable, AppUser, AppSettings, Tenant } fro
 export type { Dish, OrderItem, Order, DiningTable, AppUser, AppSettings, Tenant };
 
 const FALLBACK_DATABASE_URL =
-  'postgresql://neondb_owner:npg_dX4ozti1BycI@ep-crimson-tooth-b334yz69-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+  'postgresql://neondb_owner:npg_dX4ozti1BycI@ep-crimson-tooth-b334yz69-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=verify-full&channel_binding=require';
 
 let poolInstance: Pool | null = null;
 let isInitDone = false;
@@ -12,7 +12,10 @@ let initPromise: Promise<void> | null = null;
 
 export function getPool(): Pool {
   if (!poolInstance) {
-    const connStr = process.env.DATABASE_URL || FALLBACK_DATABASE_URL;
+    let connStr = process.env.DATABASE_URL || FALLBACK_DATABASE_URL;
+    if (connStr.includes('sslmode=require')) {
+      connStr = connStr.replace('sslmode=require', 'sslmode=verify-full');
+    }
     poolInstance = new Pool({
       connectionString: connStr,
       ssl: { rejectUnauthorized: false },
@@ -553,24 +556,36 @@ export async function ensureDatabase(): Promise<Pool> {
         }
       }
 
-      // 5. Seed dining tables per tenant if empty
+      // 5. Seed dining tables per tenant only on first initialization (do not recreate if deleted by admin)
       for (const [tenantId, tables] of Object.entries(DEFAULT_TABLES_MAP)) {
-        const tableCountRes = await pool.query(
-          'SELECT count(*)::int as count FROM tables WHERE tenant_id = $1',
+        const seedCheck = await pool.query(
+          "SELECT 1 FROM settings WHERE tenant_id = $1 AND key = 'tables_seeded'",
           [tenantId]
         );
-        if (tableCountRes.rows[0]?.count === 0) {
-          for (const tbl of tables) {
-            try {
-              await pool.query(
-                `INSERT INTO tables (tenant_id, name, sort_order, is_occupied)
-                 VALUES ($1, $2, $3, 0)`,
-                [tenantId, tbl.name, tbl.sort_order]
-              );
-            } catch (err: any) {
-              console.warn(`[ensureDatabase] Seed table ${tbl.name} notice:`, err?.message);
+        if (seedCheck.rows.length === 0) {
+          const tableCountRes = await pool.query(
+            'SELECT count(*)::int as count FROM tables WHERE tenant_id = $1',
+            [tenantId]
+          );
+          if (tableCountRes.rows[0]?.count === 0) {
+            for (const tbl of tables) {
+              try {
+                await pool.query(
+                  `INSERT INTO tables (tenant_id, name, sort_order, is_occupied)
+                   VALUES ($1, $2, $3, 0)`,
+                  [tenantId, tbl.name, tbl.sort_order]
+                );
+              } catch (err: any) {
+                console.warn(`[ensureDatabase] Seed table ${tbl.name} notice:`, err?.message);
+              }
             }
           }
+          await pool.query(
+            `INSERT INTO settings (tenant_id, key, value)
+             VALUES ($1, 'tables_seeded', '1')
+             ON CONFLICT (tenant_id, key) DO UPDATE SET value = '1'`,
+            [tenantId]
+          );
         }
       }
 
@@ -675,30 +690,37 @@ export async function createTenant(data: Partial<Tenant>): Promise<Tenant> {
   await updateSetting('restaurant_logo', logo, id);
   await updateSetting('points_ratio', '1', id);
 
-  // Initialize standard sample tables for the new tenant
-  const tableCheck = await pool.query(
-    'SELECT count(*)::int as count FROM tables WHERE tenant_id = $1',
+  // Initialize standard sample tables for the new tenant only if not previously seeded
+  const seedCheck = await pool.query(
+    "SELECT 1 FROM settings WHERE tenant_id = $1 AND key = 'tables_seeded'",
     [id]
   );
-  if (tableCheck.rows[0]?.count === 0) {
-    const defaultTables = [
-      { name: '1号桌', sort_order: 1 },
-      { name: '2号桌', sort_order: 2 },
-      { name: '3号桌', sort_order: 3 },
-      { name: '5号桌', sort_order: 4 },
-      { name: '6号桌', sort_order: 5 },
-      { name: '包厢A', sort_order: 6 },
-    ];
-    for (const tbl of defaultTables) {
-      try {
-        await pool.query(
-          `INSERT INTO tables (tenant_id, name, sort_order, is_occupied) VALUES ($1, $2, $3, 0)`,
-          [id, tbl.name, tbl.sort_order]
-        );
-      } catch (tableErr: any) {
-        console.warn(`[createTenant] Notice inserting table ${tbl.name}:`, tableErr?.message);
+  if (seedCheck.rows.length === 0) {
+    const tableCheck = await pool.query(
+      'SELECT count(*)::int as count FROM tables WHERE tenant_id = $1',
+      [id]
+    );
+    if (tableCheck.rows[0]?.count === 0) {
+      const defaultTables = [
+        { name: '1号桌', sort_order: 1 },
+        { name: '2号桌', sort_order: 2 },
+        { name: '3号桌', sort_order: 3 },
+        { name: '5号桌', sort_order: 4 },
+        { name: '6号桌', sort_order: 5 },
+        { name: '包厢A', sort_order: 6 },
+      ];
+      for (const tbl of defaultTables) {
+        try {
+          await pool.query(
+            `INSERT INTO tables (tenant_id, name, sort_order, is_occupied) VALUES ($1, $2, $3, 0)`,
+            [id, tbl.name, tbl.sort_order]
+          );
+        } catch (tableErr: any) {
+          console.warn(`[createTenant] Notice inserting table ${tbl.name}:`, tableErr?.message);
+        }
       }
     }
+    await updateSetting('tables_seeded', '1', id);
   }
 
   return formatRow<Tenant>(res.rows[0]);
@@ -1275,7 +1297,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     [
       orderId,
       tenantId,
-      orderType === '堂食' ? tableNo : '外卖送餐',
+      orderType === '堂食' ? (tableNo?.trim() || '自取/未指定桌位') : '外卖送餐',
       orderType,
       deliveryAddress,
       deliveryContact,
