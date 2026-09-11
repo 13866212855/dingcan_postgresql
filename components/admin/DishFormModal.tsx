@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { X, Upload, Check, Image as ImageIcon } from 'lucide-react';
+import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2 } from 'lucide-react';
 import { Dish } from '@/types';
 
 interface DishFormModalProps {
@@ -336,10 +336,14 @@ function DishFormInner({
               )}
             </div>
             <div className="flex-1 space-y-2">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center flex-wrap gap-2">
                 <label className="cursor-pointer px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl font-medium flex items-center space-x-1.5 transition-colors">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{uploading ? '上传中...' : '上传本地图片'}</span>
+                  {uploading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                  ) : (
+                    <Upload className="w-3.5 h-3.5" />
+                  )}
+                  <span>{uploading ? '正在上传 Cloudinary...' : '上传本地图片'}</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -349,6 +353,12 @@ function DishFormInner({
                   />
                 </label>
                 <span className="text-[11px] text-neutral-400">支持 jpg/png/webp</span>
+                {image && (image.includes('cloudinary.com') || image.includes('res.cloudinary')) && (
+                  <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                    <Cloud className="w-3 h-3 mr-1 text-emerald-600" />
+                    Cloudinary 云端直链 (永久防丢)
+                  </span>
+                )}
               </div>
               <input
                 type="text"

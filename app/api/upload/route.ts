@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,30 +9,52 @@ export async function POST(req: NextRequest) {
     const file = formData.get('file') as File | null;
 
     if (!file) {
-      return NextResponse.json({ success: false, error: '未找到上传的文件' }, { status: 400 });
+      return NextResponse.json({ success: false, error: '未找到上传的文件，请选择图片文件' }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    // Ensure uploads directory in public
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+    // Validate file type
+    const mimeType = file.type || '';
+    if (!mimeType.startsWith('image/')) {
+      return NextResponse.json(
+        { success: false, error: '请上传有效的图片格式文件 (JPG, PNG, WEBP, GIF)' },
+        { status: 400 }
+      );
     }
 
-    const type = (formData.get('type') as string) || 'img';
-    const ext = (path.extname(file.name) || '.jpg').toLowerCase();
-    const prefix = type === 'qr' ? 'qr' : 'img';
-    const filename = `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}${ext}`;
-    const filePath = path.join(uploadsDir, filename);
+    // Convert file to buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    fs.writeFileSync(filePath, buffer);
+    // Map upload category to Cloudinary folders
+    const uploadType = (formData.get('type') as string) || 'dish';
+    let targetFolder = 'restaurant_dishes';
+    if (uploadType === 'qr') {
+      targetFolder = 'restaurant_qrcodes';
+    } else if (uploadType === 'logo') {
+      targetFolder = 'restaurant_logos';
+    }
 
-    const publicUrl = `/uploads/${filename}`;
-    return NextResponse.json({ success: true, url: publicUrl, filename });
+    // Upload directly to Cloudinary
+    const uploadResult = await uploadToCloudinary(buffer, targetFolder, file.name);
+
+    return NextResponse.json({
+      success: true,
+      url: uploadResult.secure_url,
+      secure_url: uploadResult.secure_url,
+      public_id: uploadResult.public_id,
+      format: uploadResult.format,
+      bytes: uploadResult.bytes,
+      provider: 'cloudinary',
+      message: '图片已成功上传至 Cloudinary 云端存储',
+    });
   } catch (error: any) {
-    console.error('File upload error:', error);
-    return NextResponse.json({ success: false, error: '文件上传失败: ' + (error?.message || '') }, { status: 500 });
+    console.error('Cloudinary API upload error:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: '上传至 Cloudinary 云存储失败: ' + (error?.message || '网络异常'),
+      },
+      { status: 500 }
+    );
   }
 }

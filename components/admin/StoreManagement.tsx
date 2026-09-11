@@ -109,7 +109,7 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('type', 'img');
+      formData.append('type', 'logo');
 
       const res = await fetch('/api/upload', {
         method: 'POST',
