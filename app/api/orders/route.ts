@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllOrders, createOrder } from '@/lib/db';
+import { getAllOrders, createOrder, getOrderById, getSettings } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { sendOrderPaymentEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,6 +90,25 @@ export async function POST(req: NextRequest) {
       },
       tenantId
     );
+
+    // 无论餐前支付还是餐后结账，后台在播放声音与语音通知的同时，自动异步向 527194933@qq.com 发送对应的订单详单邮件（零延迟且不阻塞前台点餐接口）
+    (async () => {
+      try {
+        const fullOrder = await getOrderById(order.id, tenantId);
+        const settings = await getSettings(tenantId);
+        if (fullOrder) {
+          const triggerNote = paymentStatus === '已支付'
+            ? '客户下单时已完成扫码支付 · 后台语音同步播报'
+            : '客户提交新订单（餐后结账）· 后台语音同步播报';
+          await sendOrderPaymentEmail(fullOrder, {
+            restaurantName: settings?.restaurant_name,
+            noteTrigger: triggerNote,
+          });
+        }
+      } catch (mailErr) {
+        console.error('[Order Notice Email Error]', mailErr);
+      }
+    })();
 
     return NextResponse.json({
       success: true,

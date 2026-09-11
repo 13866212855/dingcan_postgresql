@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrderById, updateOrderStatus, updateOrderPayment } from '@/lib/db';
+import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { sendOrderPaymentEmail } from '@/lib/email';
 
 export async function GET(
   req: NextRequest,
@@ -55,6 +56,24 @@ export async function PATCH(
         );
       }
       await updateOrderPayment(id, paymentStatus, tenantId);
+
+      // 当更新为“已支付”状态时（客户在订单详情页面完成扫码支付），自动异步发送详单邮件到 527194933@qq.com
+      if (paymentStatus === '已支付') {
+        (async () => {
+          try {
+            const updatedOrder = await getOrderById(id, tenantId);
+            const settings = await getSettings(tenantId);
+            if (updatedOrder) {
+              await sendOrderPaymentEmail(updatedOrder, {
+                restaurantName: settings?.restaurant_name,
+                noteTrigger: '客户在订单详情/结账页面点击【我已完成扫码支付】',
+              });
+            }
+          } catch (mailErr) {
+            console.error('[Order Payment Notice Email Error]', mailErr);
+          }
+        })();
+      }
     }
 
     const updated = await getOrderById(id, tenantId);

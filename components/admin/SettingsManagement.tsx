@@ -19,6 +19,8 @@ import {
   Info,
   CreditCard,
   Clock,
+  Mail,
+  Send,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -48,6 +50,8 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [imageLoadError, setImageLoadError] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ success?: boolean; text?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -157,6 +161,28 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
     setImageLoadError(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleTestEmail = async () => {
+    setTestEmailLoading(true);
+    setTestEmailResult(null);
+    try {
+      const res = await fetch('/api/email/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toEmail: '527194933@qq.com' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestEmailResult({ success: true, text: '✔ 测试邮件已成功发送至 527194933@qq.com，请查收！' });
+      } else {
+        setTestEmailResult({ success: false, text: '❌ 发送失败：' + (data.error || '未知原因') });
+      }
+    } catch (e: any) {
+      setTestEmailResult({ success: false, text: '❌ 发送异常：' + (e.message || '网络连接错误') });
+    } finally {
+      setTestEmailLoading(false);
     }
   };
 
@@ -761,6 +787,67 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Email Notification Service (QQ Mail SMTP) */}
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Mail className="w-5 h-5 text-emerald-600" />
+              <h3 className="text-sm font-bold text-neutral-900">邮件实时服务通知（QQ 邮箱 SMTP）</h3>
+            </div>
+            <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center space-x-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>服务已就绪</span>
+            </span>
+          </div>
+
+          <p className="text-xs text-neutral-500 leading-relaxed">
+            当顾客在手机端扫码结账并点击<strong>【我已完成扫码支付】</strong>时，系统会自动向预设邮箱发送一份完整的订单客户详单（包含桌号/外卖地址、菜品清单、口味要求、实付金额与付款时间戳）。
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 text-xs space-y-1">
+              <div className="text-neutral-400 font-medium">通知接收目标邮箱</div>
+              <div className="text-sm font-mono font-bold text-neutral-800">527194933@qq.com</div>
+              <div className="text-[11px] text-emerald-600 font-medium">✔ 客户点击支付后即刻秒级送达</div>
+            </div>
+
+            <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 text-xs space-y-1">
+              <div className="text-neutral-400 font-medium">SMTP 发信服务器与安全授权</div>
+              <div className="text-sm font-mono font-bold text-neutral-800">smtp.qq.com (SSL: 465)</div>
+              <div className="text-[11px] text-neutral-500">已启用授权码安全验证 · 发件身份保护</div>
+            </div>
+          </div>
+
+          {/* Test Email Action Button */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5">
+            <div className="text-xs text-emerald-900">
+              <span className="font-bold">邮箱连通性自检：</span>
+              <span>可随时发送一封模拟测试详单邮件至 527194933@qq.com 验证收信效果。</span>
+            </div>
+            <button
+              type="button"
+              disabled={testEmailLoading}
+              onClick={handleTestEmail}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all active:scale-98 flex items-center space-x-1.5 shrink-0 disabled:opacity-60"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{testEmailLoading ? '正在发送测试邮件...' : '发送一封测试详单邮件'}</span>
+            </button>
+          </div>
+
+          {testEmailResult && (
+            <div
+              className={`p-3 rounded-xl text-xs font-medium ${
+                testEmailResult.success
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}
+            >
+              {testEmailResult.text}
+            </div>
+          )}
         </div>
 
         {/* Save Button */}
