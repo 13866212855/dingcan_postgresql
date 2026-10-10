@@ -4,3 +4,4 @@ export { default as MemberManagement } from './MemberManagement';
 export { default as SettingsManagement } from './SettingsManagement';
 export { default as StoreManagement } from './StoreManagement';
 export { default as TenantManagement } from './TenantManagement';
+export { default as LLMManagement } from './LLMManagement';

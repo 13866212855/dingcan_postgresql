@@ -19,9 +19,12 @@ description: 为项目添加与特定项目配置相同的大模型参数（apih
 当你被调用此技能时，必须自动在目标项目中执行以下 6 项核心任务：
 
 ### 任务 1：统一大模型参数配置
-在目标项目中的大模型客户端初始化代码（如 API 代理路由、`lib/gemini.ts` 或 `app/api/generate/route.ts` 等）中，默认配置以下参数，无需用户再次提供：
+在目标项目中的大模型客户端初始化代码（如 API 代理路由、`lib/llm.ts` 或后台管理面板）中，默认配置以下参数，无需用户再次提供：
 - **API Base URL (端点)**: `https://apihub.agnes-ai.com/v1`
-- **API Key (密钥)**: `sk-GUdpKQNIwwJSZQ5mYyrMnuCJBOjSbB73c2N6NcnNfk5LoKyq`
+- **API Key (密钥)**: `sk-vWM7RHG5n7bljBNi3GgHfygxqiKlUYrPWZLLSUByIGm4BiM9`
+- **文本大模型 (Text Model)**: `Agnes-2.5-flash`
+- **图片大模型 (Image Model)**: `Agnes-Image-2.1-flash`
+- **智能图片优化**: 自动裁剪超大照片（如 1200px 限制）并转为 WebP 无损压缩，方便在网上传输和在手机上极速展示。
 
 *(注意：在写到配置文件或代码中时，如果是在服务器端运行，可直接在此处写入默认，或将其注册在环境变量 `.env` 中作为默认回退)*。
 

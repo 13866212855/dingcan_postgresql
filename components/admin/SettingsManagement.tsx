@@ -21,6 +21,8 @@ import {
   Clock,
   Mail,
   Send,
+  Brain,
+  ArrowRight,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -848,6 +850,37 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               {testEmailResult.text}
             </div>
           )}
+        </div>
+
+        {/* AI 大脑配置快捷入口卡片 */}
+        <div className="bg-gradient-to-r from-neutral-900 to-indigo-950 text-white rounded-2xl p-5 border border-indigo-900/60 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-500 flex items-center justify-center text-white shrink-0 shadow-md shadow-indigo-500/20">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-bold text-white">AI 智能大脑与大模型配置</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  Agnes AI
+                </span>
+              </div>
+              <p className="text-neutral-300 text-xs mt-0.5">
+                已就绪。提供文本与图片大模型、上传大图智能压缩与优化、菜品文案智能撰写。
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const tabBtn = document.getElementById('tab-llm');
+              if (tabBtn) tabBtn.click();
+            }}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center space-x-1.5 shrink-0 cursor-pointer"
+          >
+            <span>进入 AI 大脑管理</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {/* Save Button */}

@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2 } from 'lucide-react';
+import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2, Sparkles, Zap, Brain, Crop as CropIcon, Eye } from 'lucide-react';
 import { Dish } from '@/types';
+import ImageCropModal, { AspectRatioType } from './ImageCropModal';
 
 interface DishFormModalProps {
   isOpen: boolean;
@@ -109,6 +110,88 @@ function DishFormInner({
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [optimizationNotice, setOptimizationNotice] = useState<string>('');
+  const [aiSuccessNotice, setAiSuccessNotice] = useState<string>('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+
+  // 统一应用 AI 视觉大模型推断出的菜品信息（名称、单价、分类、特色描述、口味）
+  const applyAiAnalysisResult = (ai: any) => {
+    if (!ai) return;
+
+    // 1. 菜品名称
+    if (ai.dish_name_suggestion) {
+      setName(ai.dish_name_suggestion);
+    }
+
+    // 2. 单价 (元) 必须自动填入
+    if (ai.price !== undefined && ai.price !== null) {
+      setPrice(String(ai.price));
+    } else if (ai.recommended_price) {
+      const p = String(ai.recommended_price).replace(/[^0-9.]/g, '');
+      if (p) setPrice(p);
+    }
+
+    // 3. 默认菜品分类
+    if (ai.category_suggestion) {
+      const rawCat = String(ai.category_suggestion).trim();
+      if (DEFAULT_CATEGORIES.includes(rawCat)) {
+        setCategory(rawCat);
+        setCustomCategory('');
+      } else {
+        // 模糊或语义匹配
+        const found = DEFAULT_CATEGORIES.find(
+          (c) =>
+            c.includes(rawCat) ||
+            rawCat.includes(c) ||
+            (rawCat.includes('炒') && c === '特色热炒') ||
+            ((rawCat.includes('主食') || rawCat.includes('饭') || rawCat.includes('面') || rawCat.includes('粉')) &&
+              c === '经典主食') ||
+            ((rawCat.includes('汤') || rawCat.includes('羹')) && c === '养生靓汤') ||
+            ((rawCat.includes('凉') || rawCat.includes('卤') || rawCat.includes('拌')) && c === '开胃凉菜') ||
+            ((rawCat.includes('饮') || rawCat.includes('酒') || rawCat.includes('茶')) && c === '酒水饮料')
+        );
+        if (found) {
+          setCategory(found);
+          setCustomCategory('');
+        } else {
+          setCategory('custom');
+          setCustomCategory(rawCat);
+        }
+      }
+    }
+
+    // 4. 菜品特色描述
+    if (ai.appetizing_description) {
+      setDescription(ai.appetizing_description);
+    }
+
+    // 5. 口味选项自动勾选
+    if (Array.isArray(ai.taste_tags) && ai.taste_tags.length > 0) {
+      setSelectedTastes((prev) => {
+        const next = new Set(prev);
+        for (const tag of ai.taste_tags) {
+          const t = String(tag);
+          if (PRESET_TASTE_OPTIONS.includes(t)) {
+            next.add(t);
+          } else if (t.includes('微辣')) next.add('微辣');
+          else if (t.includes('不辣')) next.add('不辣');
+          else if (t.includes('免葱')) next.add('免葱花');
+          else if (t.includes('香菜')) next.add('不要香菜');
+          else if (t.includes('少盐') || t.includes('少油') || t.includes('清淡')) next.add('少盐少油');
+          else if (t.includes('米饭')) next.add('米饭先上');
+        }
+        return Array.from(next);
+      });
+    }
+
+    // 6. 成功横幅提醒
+    const finalName = ai.dish_name_suggestion || name || '识别菜品';
+    const finalPrice = ai.price || ai.recommended_price || '';
+    const finalCat = ai.category_suggestion || '精选菜肴';
+    setAiSuccessNotice(
+      `✨ AI 大脑已智能推断菜名【${finalName}】、单价【${finalPrice ? `¥${finalPrice}` : '38元'}】、分类【${finalCat}】及特色描述，已自动填入！`
+    );
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -116,9 +199,19 @@ function DishFormInner({
 
     setUploading(true);
     setErrorMsg('');
+    setOptimizationNotice('');
+    setAiSuccessNotice('');
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('type', 'dish');
+      formData.append('optimize', '1');
+      formData.append('tenant', tenantId || 'default');
+      formData.append('ai_analyze', '1'); // 始终触发 AI 视觉识别与智能推算
+      formData.append('existing_categories', DEFAULT_CATEGORIES.join(','));
+      if (name.trim()) {
+        formData.append('dish_name_hint', name.trim());
+      }
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
@@ -126,6 +219,17 @@ function DishFormInner({
       const data = await res.json();
       if (data.success && data.url) {
         setImage(data.url);
+        if (data.optimization?.is_optimized) {
+          const origKb = Math.round(data.optimization.original_size / 1024);
+          const optKb = Math.round(data.optimization.optimized_size / 1024);
+          const cropTxt = data.optimization.is_cropped ? '已自动聚焦居中裁剪 · ' : '';
+          setOptimizationNotice(`AI 智能优化：${cropTxt}原图 ${origKb}KB 压缩至 ${optKb}KB (体积精简 ${data.optimization.saved_percentage})，已转为极速 WebP，手机端秒开！`);
+        }
+        if (data.ai_analysis) {
+          applyAiAnalysisResult(data.ai_analysis);
+        } else if (data.ai_error) {
+          setErrorMsg('图片已成功上传并优化，但AI大模型分析提示：' + data.ai_error + '。您也可以点击右侧【AI看图识别】重新触发。');
+        }
       } else {
         setErrorMsg(data.error || '上传图片失败');
       }
@@ -133,6 +237,75 @@ function DishFormInner({
       setErrorMsg('图片上传异常: ' + (err?.message || ''));
     } finally {
       setUploading(false);
+    }
+  };
+
+  // AI 智能文案撰写
+  const handleGenerateAiDescription = async () => {
+    if (!name.trim()) {
+      setErrorMsg('请先填写菜品名称，或直接上传菜品图片让 AI 大脑自动识别推断！');
+      return;
+    }
+    setAiGenerating(true);
+    setErrorMsg('');
+    try {
+      const finalCategory = category === 'custom' ? customCategory.trim() : category;
+      const res = await fetch('/api/admin/llm/dish-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_text',
+          dishName: name.trim(),
+          category: finalCategory,
+          currentDescription: description.trim(),
+          tenantId: tenantId || 'default',
+        }),
+      });
+      const json = await res.json();
+      if (json.success && json.description) {
+        setDescription(json.description);
+        setAiSuccessNotice(`✨ AI 已为【${name.trim()}】润色撰写了专属垂涎美食介绍！`);
+      } else {
+        setErrorMsg(json.error || 'AI 文案生成失败');
+      }
+    } catch (err: any) {
+      setErrorMsg('调用 AI 大脑异常: ' + (err?.message || ''));
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  // AI 视觉看图识别
+  const handleAnalyzeAiImage = async () => {
+    if (!image) {
+      setErrorMsg('请先选择或上传菜品图片');
+      return;
+    }
+    setAiGenerating(true);
+    setErrorMsg('');
+    setAiSuccessNotice('');
+    try {
+      const res = await fetch('/api/admin/llm/dish-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'analyze_image',
+          imageUrl: image,
+          dishName: name.trim(),
+          tenantId: tenantId || 'default',
+          existingCategories: DEFAULT_CATEGORIES,
+        }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        applyAiAnalysisResult(json.data);
+      } else {
+        setErrorMsg(json.error || 'AI 视觉识别失败');
+      }
+    } catch (err: any) {
+      setErrorMsg('AI 视觉分析异常: ' + (err?.message || ''));
+    } finally {
+      setAiGenerating(false);
     }
   };
 
@@ -222,6 +395,37 @@ function DishFormInner({
           </div>
         )}
 
+        {/* AI 分析中实时反馈 */}
+        {uploading && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 text-xs flex items-center space-x-2.5 animate-pulse">
+            <Loader2 className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            <div>
+              <p className="font-bold text-amber-900">大模型正在对图片进行智能裁剪压缩与看图识别...</p>
+              <p className="text-[11px] text-amber-700 mt-0.5">将自动推断菜品名称、预估单价、匹配默认分类并撰写特色美食描述</p>
+            </div>
+          </div>
+        )}
+
+        {/* AI 智能推断成功横幅 */}
+        {aiSuccessNotice && (
+          <div className="p-3 bg-gradient-to-r from-amber-50 to-emerald-50 border border-emerald-200/80 rounded-2xl text-emerald-900 text-xs flex items-start justify-between space-x-2 animate-in fade-in zoom-in-95 duration-200 shadow-xs">
+            <div className="flex items-start space-x-2">
+              <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-neutral-800">AI 大脑看图智能推断完成</p>
+                <p className="text-neutral-600 mt-0.5 leading-relaxed">{aiSuccessNotice}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAiSuccessNotice('')}
+              className="text-neutral-400 hover:text-neutral-600 p-0.5"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Dish Name and Price */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="sm:col-span-2">
@@ -304,13 +508,39 @@ function DishFormInner({
 
         {/* Description */}
         <div>
-          <label className="block font-bold text-neutral-700 mb-1">菜品特色描述</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="font-bold text-neutral-700">菜品特色描述</label>
+            <div className="flex items-center space-x-1.5">
+              <button
+                type="button"
+                onClick={handleGenerateAiDescription}
+                disabled={aiGenerating}
+                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors flex items-center space-x-1 cursor-pointer border border-indigo-200"
+                title="调用大模型自动撰写令人垂涎欲滴的专业美食文案"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>{aiGenerating ? 'AI思考中...' : 'AI帮写简介'}</span>
+              </button>
+              {image && (
+                <button
+                  type="button"
+                  onClick={handleAnalyzeAiImage}
+                  disabled={aiGenerating}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors flex items-center space-x-1 cursor-pointer border border-amber-200"
+                  title="让AI视觉大脑看图识别并提炼美味特点"
+                >
+                  <Brain className="w-3.5 h-3.5 text-amber-600" />
+                  <span>AI看图识别</span>
+                </button>
+              )}
+            </div>
+          </div>
           <textarea
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="介绍菜品主料、风味特点、辣度口感等..."
-            className="w-full px-3 py-2 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+            placeholder="介绍菜品主料、风味特点、辣度口感等，或点击右上角【AI帮写简介】自动生成..."
+            className="w-full px-3 py-2 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 text-sm"
           />
         </div>
 
@@ -319,6 +549,14 @@ function DishFormInner({
           <label className="block font-bold text-neutral-700 mb-1">
             菜品图片（可上传本地图片、输入图片链接或选择下方精美图库）
           </label>
+
+          {/* AI 优化提示条 */}
+          {optimizationNotice && (
+            <div className="mb-2 p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center space-x-1.5 animate-in fade-in duration-200">
+              <Zap className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{optimizationNotice}</span>
+            </div>
+          )}
 
           {/* Current Image Preview & Upload Input */}
           <div className="flex gap-3 items-center mb-3">
@@ -343,7 +581,7 @@ function DishFormInner({
                   ) : (
                     <Upload className="w-3.5 h-3.5" />
                   )}
-                  <span>{uploading ? '正在上传 Cloudinary...' : '上传本地图片'}</span>
+                  <span>{uploading ? 'AI 视觉分析与优化中...' : '上传本地图片'}</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -352,7 +590,7 @@ function DishFormInner({
                     disabled={uploading}
                   />
                 </label>
-                <span className="text-[11px] text-neutral-400">支持 jpg/png/webp</span>
+                <span className="text-[11px] text-neutral-400">支持 jpg/png/webp · 自动压缩与AI推断</span>
                 {image && (image.includes('cloudinary.com') || image.includes('res.cloudinary')) && (
                   <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                     <Cloud className="w-3 h-3 mr-1 text-emerald-600" />
@@ -380,7 +618,12 @@ function DishFormInner({
                 <button
                   type="button"
                   key={idx}
-                  onClick={() => setImage(preset.url)}
+                  onClick={() => {
+                    setImage(preset.url);
+                    if (!name.trim()) {
+                      setName(preset.name);
+                    }
+                  }}
                   className={`relative rounded-lg overflow-hidden border transition-all aspect-square group ${
                     image === preset.url
                       ? 'ring-2 ring-amber-500 border-amber-500'

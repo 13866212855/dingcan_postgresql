@@ -31,6 +31,7 @@ import {
   BellRing,
   Building2,
   ChevronDown,
+  Brain,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import TableManagement from '@/components/admin/TableManagement';
@@ -38,6 +39,7 @@ import MemberManagement from '@/components/admin/MemberManagement';
 import SettingsManagement from '@/components/admin/SettingsManagement';
 import StoreManagement from '@/components/admin/StoreManagement';
 import TenantManagement from '@/components/admin/TenantManagement';
+import LLMManagement from '@/components/admin/LLMManagement';
 import { Dish, Order, Tenant } from '@/types';
 import { safeSetItem, safeRemoveItem } from '@/lib/storage';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
@@ -102,9 +104,9 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Active Admin Tab: 'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings'
+  // Active Admin Tab: 'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings' | 'llm'
   const [activeTabState, setActiveTabState] = useState<
-    'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings'
+    'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings' | 'llm'
   >('orders');
 
   // 若处于子分店后台，严格杜绝非法进入“连锁分店”管理Tab（通过计算派生保证永不越权）
@@ -873,6 +875,22 @@ export default function AdminPage() {
               <Settings className="w-3.5 h-3.5" />
               <span>收款配置</span>
             </button>
+
+            <button
+              id="tab-llm"
+              onClick={() => setActiveTab('llm')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'llm'
+                  ? 'bg-gradient-to-r from-amber-500 to-indigo-600 text-white shadow-xs'
+                  : 'text-neutral-300 hover:text-white'
+              }`}
+            >
+              <Brain className="w-3.5 h-3.5 text-amber-400" />
+              <span>AI大脑配置</span>
+              <span className="text-[9px] bg-indigo-500/80 text-white px-1.5 py-0.2 rounded-full font-sans">
+                Agnes
+              </span>
+            </button>
           </div>
 
           {/* User info & Links & Sound control */}
@@ -938,6 +956,7 @@ export default function AdminPage() {
             { id: 'store', label: '店面品牌', icon: Store },
             ...(isMasterAdmin ? [{ id: 'tenants', label: '连锁门店', icon: Building2 }] : []),
             { id: 'settings', label: '收款配置', icon: Settings },
+            { id: 'llm', label: 'AI大脑', icon: Brain },
           ].map((item) => {
             const Icon = item.icon;
             const isSel = activeTab === item.id;
@@ -1523,6 +1542,9 @@ export default function AdminPage() {
               返回订单中心
             </button>
           </div>
+        ) : activeTab === 'llm' ? (
+          /* ================= AI BRAIN / LLM MODULE ================= */
+          <LLMManagement tenantId={currentTenantId} />
         ) : (
           /* ================= SETTINGS MODULE ================= */
           <SettingsManagement tenantId={currentTenantId} />

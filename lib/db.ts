@@ -966,6 +966,15 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let enable_pay_before = 1; // 默认开启餐前付款(立付)
   let enable_pay_after = 1; // 默认开启餐后结账(先吃后付)
 
+  // 大模型 (AI大脑) 默认配置
+  let llm_base_url = 'https://apihub.agnes-ai.com/v1';
+  let llm_api_key = 'sk-vWM7RHG5n7bljBNi3GgHfygxqiKlUYrPWZLLSUByIGm4BiM9';
+  let llm_text_model = 'Agnes-2.5-flash';
+  let llm_image_model = 'Agnes-Image-2.1-flash';
+  let llm_auto_process_images = 1; // 默认启用上传大图智能处理压缩
+  let llm_max_image_dimension = 1200; // 默认最长边1200px
+  let llm_image_quality = 82; // 默认WebP质量82
+
   for (const row of res.rows) {
     if (row.key === 'payment_qr_code') payment_qr_code = row.value || '';
     if (row.key === 'points_ratio') points_ratio = parseFloat(row.value) || 1;
@@ -981,6 +990,15 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     }
     if (row.key === 'enable_pay_before') enable_pay_before = row.value === '0' ? 0 : 1;
     if (row.key === 'enable_pay_after') enable_pay_after = row.value === '0' ? 0 : 1;
+
+    // LLM配置键值
+    if (row.key === 'llm_base_url' && row.value?.trim()) llm_base_url = row.value.trim();
+    if (row.key === 'llm_api_key' && row.value?.trim()) llm_api_key = row.value.trim();
+    if (row.key === 'llm_text_model' && row.value?.trim()) llm_text_model = row.value.trim();
+    if (row.key === 'llm_image_model' && row.value?.trim()) llm_image_model = row.value.trim();
+    if (row.key === 'llm_auto_process_images') llm_auto_process_images = row.value === '0' ? 0 : 1;
+    if (row.key === 'llm_max_image_dimension') llm_max_image_dimension = parseInt(row.value) || 1200;
+    if (row.key === 'llm_image_quality') llm_image_quality = parseInt(row.value) || 82;
   }
 
   return {
@@ -997,6 +1015,13 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     table_input_mode,
     enable_pay_before,
     enable_pay_after,
+    llm_base_url,
+    llm_api_key,
+    llm_text_model,
+    llm_image_model,
+    llm_auto_process_images,
+    llm_max_image_dimension,
+    llm_image_quality,
   };
 }
 

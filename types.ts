@@ -103,4 +103,32 @@ export interface AppSettings {
   table_input_mode?: 'select' | 'input' | 'both'; // 桌号选择方式: 'select'下拉选桌, 'input'手输桌号, 'both'两者皆可 (默认'select')
   enable_pay_before?: number; // 支付付款时机: 1=开启餐前付款(立付), 0=关闭 (默认1)
   enable_pay_after?: number; // 支付付款时机: 1=开启餐后结账(先吃后付), 0=关闭 (默认1)
+  // 大模型 (AI大脑) 配置
+  llm_base_url?: string; // 大模型服务端点，例如：https://apihub.agnes-ai.com/v1
+  llm_api_key?: string; // 大模型授权访问密钥 (API Key)
+  llm_text_model?: string; // 文本大模型，例如：Agnes-2.5-flash
+  llm_image_model?: string; // 图片/多模态大模型，例如：Agnes-Image-2.1-flash
+  llm_auto_process_images?: number; // 开启上传大图自动智能处理与压缩优化: 1=开启, 0=关闭 (默认1)
+  llm_max_image_dimension?: number; // 智能处理最大宽高尺寸限制（像素），默认1200
+  llm_image_quality?: number; // 智能处理压缩画质 (1-100)，默认82
 }
+
+export interface LLMConfig {
+  baseUrl: string;
+  apiKey: string;
+  textModel: string;
+  imageModel: string;
+  autoProcessImages?: boolean;
+  maxDimension?: number;
+  quality?: number;
+}
+
+export const DEFAULT_LLM_CONFIG: LLMConfig = {
+  baseUrl: 'https://apihub.agnes-ai.com/v1',
+  apiKey: 'sk-vWM7RHG5n7bljBNi3GgHfygxqiKlUYrPWZLLSUByIGm4BiM9',
+  textModel: 'Agnes-2.5-flash',
+  imageModel: 'Agnes-Image-2.1-flash',
+  autoProcessImages: true,
+  maxDimension: 1200,
+  quality: 82,
+};
