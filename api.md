@@ -205,12 +205,16 @@
   {
     "topic": "Python基础语法",
     "summary": "学习成果总结...",
+    "teachingProcess": "教学过程描述...",
     "photos": [
       { "name": "photo1.jpg", "data": "data:image/jpeg;base64,...", "caption": "说明" }
     ],
-    "signPhoto": { "name": "sign.jpg", "data": "data:image/jpeg;base64,..." }
+    "signPhoto": { "name": "sign.jpg", "data": "data:image/jpeg;base64,..." },
+    "createdAt": "2026-09-01T08:30:00.000Z"
   }
   ```
+
+> `teachingProcess` 为必填；`createdAt` 可选，仅在新建记录时生效，用于导入合集包时还原记录的原始时间（不传则使用当前时间）。
 
 **响应**
 - **成功 (200)**:
@@ -252,6 +256,27 @@
 - **请求头**: `Authorization: Bearer <user_token>`
 
 **响应**: ZIP 文件下载
+
+### 一键下载所有 ZIP 包（合集包）
+
+把当前用户的全部导出记录打成一个合集 ZIP，内含各记录的原始 ZIP 文件（逐字节一致）和一份 `导入清单.json`（记录元数据，供「导入所有ZIP包」还原）。
+
+**请求**
+- **URL**: `GET /api/export/download-all`
+- **请求头**: `Authorization: Bearer <user_token>`
+
+**响应**: 合集 ZIP 文件下载，结构如下：
+
+```
+全部导出记录_YYYYMMDD.zip
+├── 课题A_20260901_h_xxx.zip      # 各记录的原始 ZIP
+├── 课题B_20260915_h_yyy.zip
+└── 导入清单.json                   # totalRecords / missingZipCount / records（含 topic、summary、teachingProcess、createdAt 等）
+```
+
+- **失败 (404)**: `{"error": "暂无导出记录，无法打包下载"}` 或 `{"error": "ZIP 文件均已丢失，无法打包下载"}`
+
+> 配套的「导入所有ZIP包」在前端完成：解析合集包与 `导入清单.json`，与现有历史按「课题 + 创建时间」查重后，逐条调用 `POST /api/export`（携带原始 `createdAt`）完成导入。
 
 ### 删除历史记录
 

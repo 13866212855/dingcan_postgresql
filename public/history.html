@@ -204,6 +204,124 @@
       font-size: 0.875rem;
     }
 
+    /* Batch toolbar */
+    .batch-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .batch-bar .batch-title {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .batch-bar .batch-desc {
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      margin-top: 0.125rem;
+    }
+
+    .batch-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Bundle import modal */
+    .bundle-list {
+      max-height: 40vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 0.5rem;
+    }
+
+    .bundle-item {
+      padding: 0.625rem 0.875rem;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .bundle-item:last-child { border-bottom: none; }
+
+    .bundle-item .row1 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      font-weight: 500;
+      font-size: 0.9375rem;
+    }
+
+    .bundle-item .row1 span:first-child { overflow-wrap: anywhere; }
+
+    .bundle-item .meta { margin-top: 0.125rem; }
+
+    .bundle-item.dup { background: #f8fafc; opacity: 0.65; }
+
+    .tag {
+      font-size: 0.75rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .tag-dup { background: #f1f5f9; color: var(--text-secondary); }
+    .tag-miss { background: #fef2f2; color: var(--error); }
+    .tag-ok { background: #ecfdf5; color: #047857; }
+
+    .progress-track {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 0.75rem;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+      border-radius: 999px;
+      transition: width 0.3s;
+    }
+
+    .progress-text {
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      overflow-wrap: anywhere;
+    }
+
+    .result-box {
+      margin-top: 1rem;
+      padding: 0.875rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+    }
+
+    .result-ok { background: #ecfdf5; color: #065f46; }
+
+    .result-fail-item {
+      color: var(--error);
+      font-size: 0.8125rem;
+      margin-top: 0.25rem;
+      overflow-wrap: anywhere;
+    }
+
     /* Modal */
     .modal-backdrop {
       position: fixed;
@@ -334,6 +452,8 @@
       .nav-bar { flex-direction: column; gap: 1rem; align-items: stretch; }
       .actions { flex-direction: column; }
       .modal { padding: 1.5rem; }
+      .batch-bar { flex-direction: column; align-items: stretch; }
+      .batch-actions { flex-direction: column; }
     }
   </style>
 </head>
@@ -351,9 +471,25 @@
       </span>
     </div>
 
+    <div class="batch-bar">
+      <div>
+        <div class="batch-title">📦 批量操作</div>
+        <div class="batch-desc">把全部记录的 ZIP 打包成一个合集包下载；换设备或重装后可一键导入合集包</div>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-primary" id="downloadAllBtn" onclick="downloadAll()">
+          📦 一键下载所有ZIP包
+        </button>
+        <button class="btn btn-success" id="importAllBtn" onclick="document.getElementById('bundleFileInput').click()">
+          🗂️ 导入所有ZIP包
+        </button>
+      </div>
+      <input type="file" id="bundleFileInput" accept=".zip" hidden>
+    </div>
+
     <div class="import-bar" onclick="document.getElementById('zipFileInput').click()">
       <div class="icon">📤</div>
-      <p>点击选择 ZIP 文件，导入到历史记录</p>
+      <p>点击选择单条记录的 ZIP 文件，导入到历史记录</p>
       <input type="file" id="zipFileInput" accept=".zip" hidden>
     </div>
 
@@ -419,6 +555,38 @@
       </div>
     </div>
 
+    <!-- Bundle Import Modal -->
+    <div id="bundleModal" class="hidden">
+      <div class="modal-backdrop" onclick="closeBundleModal()"></div>
+      <div class="modal" style="max-width: 640px;">
+        <div id="bundleModalLoading">
+          <div class="modal-loading">
+            <span class="spinner spinner-dark" style="width: 32px; height: 32px; border-width: 3px;"></span>
+            <p>正在解析合集包...</p>
+          </div>
+        </div>
+        <div id="bundleModalForm" class="hidden">
+          <h3>🗂️ 导入所有 ZIP 包</h3>
+          <p class="modal-subtitle" id="bundleSubtitle"></p>
+          <div class="bundle-list" id="bundleRecordList"></div>
+
+          <div class="modal-actions" id="bundleActions">
+            <button class="btn btn-secondary" onclick="closeBundleModal()">取消</button>
+            <button class="btn btn-success" id="bundleConfirmBtn" onclick="onBundleConfirmClick()">
+              开始导入
+            </button>
+          </div>
+
+          <div id="bundleProgress" class="hidden">
+            <div class="progress-track"><div class="progress-fill" id="bundleProgressFill"></div></div>
+            <p class="progress-text" id="bundleProgressText"></p>
+          </div>
+
+          <div id="bundleResult" class="hidden"></div>
+        </div>
+      </div>
+    </div>
+
     <footer>
       <a href="index.html">资料收集</a> · <a href="admin.html">管理后台</a> · 氛围编程社团资料系统
     </footer>
@@ -436,6 +604,13 @@
 
     // ====== Import ZIP state ======
     let importData = null;
+
+    // ====== Batch download / bundle import state ======
+    let currentHistory = [];   // 最近一次加载的历史列表（合集导入查重用）
+    let bundleZip = null;      // 合集包的 JSZip 实例
+    let bundleRecords = [];    // 合集包内的记录（含 dup / zipExists 标记）
+    let bundleImporting = false;
+    let bundleDone = false;
 
     // ====== History list ======
 
@@ -458,6 +633,9 @@
         }
 
         const history = await res.json();
+        currentHistory = history;
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        if (downloadAllBtn) downloadAllBtn.disabled = history.length === 0;
         loading.classList.add('hidden');
 
         if (history.length === 0) {
@@ -470,7 +648,7 @@
         list.classList.remove('hidden');
         list.innerHTML = history.map(record => `
           <div class="card" id="record-${record.id}">
-            <div class="card-title">${record.topic}</div>
+            <div class="card-title">${escapeHtml(record.topic)}</div>
             <div class="meta">
               ${new Date(record.createdAt).toLocaleString('zh-CN', {
                 year: 'numeric',
@@ -805,6 +983,305 @@
     function closeImportModal() {
       document.getElementById('importModal').classList.add('hidden');
       importData = null;
+    }
+
+    // ====== 一键下载所有 ZIP 包 ======
+
+    async function downloadAll() {
+      const btn = document.getElementById('downloadAllBtn');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const original = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner"></span> 打包中...';
+
+      try {
+        const res = await fetch('/api/export/download-all', {
+          headers: { 'Authorization': `Bearer ${userToken}` },
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || ('HTTP ' + res.status));
+        }
+
+        const blob = await res.blob();
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `全部导出记录_${date}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (error) {
+        alert('打包下载失败: ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    }
+
+    // ====== 导入所有 ZIP 包（合集包） ======
+
+    document.getElementById('bundleFileInput').addEventListener('change', function(e) {
+      if (this.files && this.files[0]) {
+        handleBundleFile(this.files[0]);
+      }
+      this.value = '';
+    });
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    async function handleBundleFile(file) {
+      showBundleModal('loading');
+
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const manifestEntry = zip.file('导入清单.json');
+
+        if (manifestEntry) {
+          // 一键下载生成的合集包
+          await prepareBundleImport(zip, manifestEntry);
+          return;
+        }
+
+        // 没有清单：可能是单条记录 ZIP，交给原有单包导入流程
+        const isSingleZip = Object.keys(zip.files).some(k =>
+          !zip.files[k].dir && (k.includes('场景照片/') || k.includes('学习成果总结.docx'))
+        );
+        if (isSingleZip) {
+          closeBundleModal();
+          handleImportZip(file);
+          return;
+        }
+
+        const hasInnerZips = Object.keys(zip.files).some(k =>
+          !zip.files[k].dir && k.toLowerCase().endsWith('.zip')
+        );
+        if (hasInnerZips) {
+          throw new Error('合集包缺少「导入清单.json」，请重新用「一键下载所有ZIP包」生成后再导入');
+        }
+        throw new Error('无法识别的 ZIP 内容，请选择合集包或单条记录的 ZIP 文件');
+      } catch (error) {
+        closeBundleModal();
+        alert('解析失败: ' + error.message);
+      }
+    }
+
+    async function prepareBundleImport(zip, manifestEntry) {
+      bundleZip = zip;
+      const manifest = JSON.parse(await manifestEntry.async('text'));
+      const records = Array.isArray(manifest.records) ? manifest.records : [];
+      if (records.length === 0) {
+        throw new Error('合集包中没有可导入的记录');
+      }
+
+      // 与现有历史查重：课题 + 创建时间一致视为同一条记录
+      bundleRecords = records.map(rec => {
+        const createdTs = rec.createdAt ? new Date(rec.createdAt).getTime() : NaN;
+        const dup = currentHistory.some(h =>
+          h.topic === rec.topic &&
+          h.createdAt &&
+          createdTs === new Date(h.createdAt).getTime()
+        );
+        return { ...rec, dup, zipExists: !!zip.file(rec.zipFileName) };
+      });
+
+      const dupCount = bundleRecords.filter(r => r.dup).length;
+      const missCount = bundleRecords.filter(r => !r.dup && !r.zipExists).length;
+      const importable = bundleRecords.filter(r => !r.dup && r.zipExists).length;
+
+      document.getElementById('bundleSubtitle').textContent =
+        `共 ${bundleRecords.length} 条记录` +
+        (dupCount ? `，${dupCount} 条已存在将跳过` : '') +
+        (missCount ? `，${missCount} 条缺少 ZIP 无法导入` : '') +
+        `，本次将导入 ${importable} 条`;
+
+      document.getElementById('bundleRecordList').innerHTML = bundleRecords.map(r => {
+        let tag;
+        if (r.dup) tag = '<span class="tag tag-dup">已存在 · 跳过</span>';
+        else if (!r.zipExists) tag = '<span class="tag tag-miss">缺少 ZIP</span>';
+        else tag = '<span class="tag tag-ok">待导入</span>';
+        const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('zh-CN') : '日期未知';
+        return `
+          <div class="bundle-item${r.dup ? ' dup' : ''}">
+            <div class="row1"><span>${escapeHtml(r.topic || '未命名课题')}</span>${tag}</div>
+            <div class="meta">📅 ${dateStr} · 📸 ${r.photoCount ?? 0} 张照片${r.hasSignPhoto ? ' · 📋 签到表' : ''}</div>
+          </div>`;
+      }).join('');
+
+      // 重置到确认状态
+      document.getElementById('bundleActions').classList.remove('hidden');
+      document.getElementById('bundleConfirmBtn').disabled = false;
+      document.getElementById('bundleConfirmBtn').textContent = importable > 0
+        ? `开始导入 (${importable} 条)` : '没有可导入的记录';
+      document.getElementById('bundleProgress').classList.add('hidden');
+      document.getElementById('bundleResult').classList.add('hidden');
+      bundleDone = false;
+
+      showBundleModal('form');
+    }
+
+    async function confirmBundleImport() {
+      const toImport = bundleRecords.filter(r => !r.dup && r.zipExists);
+      if (toImport.length === 0) return;
+
+      bundleImporting = true;
+      bundleDone = false;
+      document.getElementById('bundleActions').classList.add('hidden');
+      document.getElementById('bundleResult').classList.add('hidden');
+      const progressBox = document.getElementById('bundleProgress');
+      const fill = document.getElementById('bundleProgressFill');
+      const text = document.getElementById('bundleProgressText');
+      progressBox.classList.remove('hidden');
+
+      let okCount = 0;
+      const failed = [];
+
+      for (let i = 0; i < toImport.length; i++) {
+        const rec = toImport[i];
+        fill.style.width = Math.round((i / toImport.length) * 100) + '%';
+        text.textContent = `正在导入 ${i + 1}/${toImport.length}：${rec.topic}`;
+        try {
+          const payload = await buildRecordPayload(rec);
+          const res = await fetch('/api/export', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${userToken}`,
+            },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok || data.error) {
+            throw new Error(data.error || ('HTTP ' + res.status));
+          }
+          okCount++;
+        } catch (error) {
+          failed.push({ topic: rec.topic, reason: error.message });
+        }
+      }
+
+      fill.style.width = '100%';
+      text.textContent = '导入完成';
+
+      const result = document.getElementById('bundleResult');
+      result.classList.remove('hidden');
+      let resultHtml = `<div class="result-box result-ok">✅ 成功导入 ${okCount} 条${failed.length ? `，失败 ${failed.length} 条` : ''}</div>`;
+      if (failed.length) {
+        resultHtml += failed.map(f =>
+          `<div class="result-fail-item">❌ ${escapeHtml(f.topic)}：${escapeHtml(f.reason)}</div>`
+        ).join('');
+      }
+      result.innerHTML = resultHtml;
+
+      // 恢复按钮为“完成”
+      document.getElementById('bundleActions').classList.remove('hidden');
+      const confirmBtn = document.getElementById('bundleConfirmBtn');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '完成';
+
+      bundleImporting = false;
+      bundleDone = true;
+      loadHistory(); // 刷新背后的历史列表
+    }
+
+    // 从合集包中的内层 ZIP 提取照片/签到表，组装成 /api/export 的请求体
+    async function buildRecordPayload(rec) {
+      const entry = bundleZip.file(rec.zipFileName);
+      if (!entry) throw new Error('合集包中找不到 ' + rec.zipFileName);
+      const inner = await JSZip.loadAsync(await entry.async('blob'));
+
+      // 内层 ZIP 的根目录（形如 课题_20261020/）
+      const entries = Object.keys(inner.files);
+      const dirs = entries.filter(k => k.endsWith('/'));
+      const rootFolder = dirs[0] || '';
+
+      // 第一遍：先收集所有照片说明（保证说明与照片对应）
+      const captionMap = {};
+      for (const [p, fe] of Object.entries(inner.files)) {
+        if (fe.dir) continue;
+        const rel = rootFolder ? p.replace(rootFolder, '') : p;
+        if (rel.includes('场景照片/')) {
+          const filename = rel.split('场景照片/')[1];
+          if (filename && filename.endsWith('_说明.txt')) {
+            captionMap[filename.replace('_说明.txt', '')] = await fe.async('text');
+          }
+        }
+      }
+
+      // 第二遍：收集照片和签到表
+      const photos = [];
+      let signPhoto = null;
+      for (const [p, fe] of Object.entries(inner.files)) {
+        if (fe.dir) continue;
+        const rel = rootFolder ? p.replace(rootFolder, '') : p;
+
+        if (rel.includes('场景照片/')) {
+          const filename = rel.split('场景照片/')[1];
+          if (!filename) continue;
+          if (filename.match(/\.(jpe?g|png)$/i)) {
+            const baseName = filename.substring(0, filename.lastIndexOf('.'));
+            photos.push({
+              name: filename,
+              data: await blobToBase64(await fe.async('blob')),
+              caption: captionMap[baseName] || '',
+            });
+          }
+        } else if (rel.includes('签到表/')) {
+          const filename = rel.split('签到表/')[1];
+          if (filename && filename.match(/\.(jpe?g|png)$/i)) {
+            signPhoto = {
+              name: filename,
+              data: await blobToBase64(await fe.async('blob')),
+            };
+          }
+        }
+      }
+
+      return {
+        topic: rec.topic,
+        summary: rec.summary,
+        teachingProcess: rec.teachingProcess,
+        photos,
+        signPhoto,
+        createdAt: rec.createdAt,
+      };
+    }
+
+    function onBundleConfirmClick() {
+      if (bundleDone) {
+        closeBundleModal();
+        return;
+      }
+      confirmBundleImport();
+    }
+
+    function showBundleModal(mode) {
+      document.getElementById('bundleModal').classList.remove('hidden');
+      if (mode === 'loading') {
+        document.getElementById('bundleModalLoading').classList.remove('hidden');
+        document.getElementById('bundleModalForm').classList.add('hidden');
+      } else {
+        document.getElementById('bundleModalLoading').classList.add('hidden');
+        document.getElementById('bundleModalForm').classList.remove('hidden');
+      }
+    }
+
+    function closeBundleModal() {
+      if (bundleImporting) return; // 导入进行中不允许关闭
+      document.getElementById('bundleModal').classList.add('hidden');
+      if (bundleDone) {
+        bundleDone = false;
+        loadHistory();
+      }
+      bundleZip = null;
+      bundleRecords = [];
     }
 
     loadHistory();

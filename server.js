@@ -164,7 +164,7 @@ app.post('/api/user/login', async (req, res) => {
 
 app.post('/api/export', authenticateUser, async (req, res) => {
   try {
-    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto } = req.body;
+    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto, createdAt: clientCreatedAt } = req.body;
     if (!topic || !summary) {
       return res.status(400).json({ error: '请提供课题名称和总结' });
     }
@@ -183,7 +183,10 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       }
     }
 
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // 批量导入合集包时会传入原始 createdAt，用于还原记录的原始时间（仅新建时生效）
+    const providedDate = (!existingRecordId && clientCreatedAt) ? new Date(clientCreatedAt) : null;
+    const baseDate = (providedDate && !isNaN(providedDate.getTime())) ? providedDate : new Date();
+    const date = baseDate.toISOString().slice(0, 10).replace(/-/g, '');
     const recordId = isEdit ? existingRecordId : ('h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
     const zipFileName = `${topic}_${date}_${recordId}.zip`;
     const userExportDir = path.join(exportsDir, req.user.userId);
@@ -219,7 +222,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       }),
       new Paragraph({
         children: [new TextRun({
-          text: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+          text: baseDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
           size: 24, font: '宋体', color: '888888',
         })],
         alignment: AlignmentType.CENTER,
@@ -253,7 +256,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       }),
       new Paragraph({
         children: [new TextRun({
-          text: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+          text: baseDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
           size: 24, font: '宋体', color: '888888',
         })],
         alignment: AlignmentType.CENTER,
@@ -317,7 +320,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
         teachingProcess,
         photoCount: photos ? photos.length : 0,
         hasSignPhoto: !!signPhoto,
-        createdAt: new Date().toISOString(),
+        createdAt: baseDate.toISOString(),
         zipFileName,
       };
       history.push(newRecord);
@@ -328,6 +331,68 @@ app.post('/api/export', authenticateUser, async (req, res) => {
   } catch (error) {
     console.error('Export error:', error.message);
     res.status(500).json({ error: '导出失败: ' + error.message });
+  }
+});
+
+// 一键下载所有 ZIP 包：把当前用户全部导出记录打成一个合集 ZIP（内含各记录原始 ZIP + 导入清单.json）
+app.get('/api/export/download-all', authenticateUser, async (req, res) => {
+  try {
+    const history = loadHistory();
+    const userRecords = history
+      .filter(h => h.userId === req.user.userId)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)); // 按时间正序排列，导入后顺序一致
+
+    if (userRecords.length === 0) {
+      return res.status(404).json({ error: '暂无导出记录，无法打包下载' });
+    }
+
+    const JSZip = require('jszip');
+    const outerZip = new JSZip();
+    const manifestRecords = [];
+    let missingCount = 0;
+
+    for (const record of userRecords) {
+      const zipPath = path.join(exportsDir, req.user.userId, record.zipFileName);
+      if (!fs.existsSync(zipPath)) {
+        missingCount++;
+        continue;
+      }
+      // 原样嵌入原始 ZIP（逐字节一致，导入时可完整还原）
+      outerZip.file(record.zipFileName, fs.readFileSync(zipPath));
+      manifestRecords.push({
+        zipFileName: record.zipFileName,
+        recordId: record.id,
+        topic: record.topic,
+        summary: record.summary,
+        teachingProcess: record.teachingProcess,
+        photoCount: record.photoCount,
+        hasSignPhoto: record.hasSignPhoto,
+        createdAt: record.createdAt,
+      });
+    }
+
+    if (manifestRecords.length === 0) {
+      return res.status(404).json({ error: 'ZIP 文件均已丢失，无法打包下载' });
+    }
+
+    outerZip.file('导入清单.json', JSON.stringify({
+      app: 'shetuandabao',
+      manifestVersion: 1,
+      exportedAt: new Date().toISOString(),
+      totalRecords: manifestRecords.length,
+      missingZipCount: missingCount,
+      records: manifestRecords,
+    }, null, 2));
+
+    // 内层 ZIP 已经是压缩格式，外层用 STORE 避免重复压缩耗时
+    const bundleBuffer = await outerZip.generateAsync({ type: 'nodebuffer', compression: 'STORE' });
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    res.set('Content-Type', 'application/zip');
+    res.attachment(`全部导出记录_${date}.zip`);
+    res.send(bundleBuffer);
+  } catch (error) {
+    console.error('Download-all error:', error.message);
+    res.status(500).json({ error: '打包下载失败: ' + error.message });
   }
 });
 
@@ -382,9 +447,10 @@ app.get('/api/config', authenticateToken, (req, res) => {
 app.put('/api/config', authenticateToken, (req, res) => {
   const { api_key, base_url, model_name, temperature, max_tokens } = req.body;
   const config = {
-    api_key: api_key,
-    base_url: base_url || defaultConfig.base_url,
-    model_name: model_name || defaultConfig.model_name,
+    // trim 防止复制粘贴带入的首尾空格/换行导致大模型 401
+    api_key: typeof api_key === 'string' ? api_key.trim() : api_key,
+    base_url: (base_url || defaultConfig.base_url).trim(),
+    model_name: (model_name || defaultConfig.model_name).trim(),
     temperature: temperature ?? defaultConfig.temperature,
     max_tokens: max_tokens ?? defaultConfig.max_tokens,
   };
