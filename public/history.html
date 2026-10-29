@@ -317,6 +317,23 @@
 
     .result-warn { background: #fffbeb; color: #92400e; }
 
+    /* ====== 卡片排序与时间编辑 ====== */
+    .card-head { display: flex; align-items: flex-start; gap: 0.5rem; }
+    .drag-handle { cursor: grab; color: #94a3b8; font-size: 1rem; line-height: 1.4; user-select: none; padding: 0 0.25rem; }
+    .drag-handle:active { cursor: grabbing; }
+    .order-num { background: #eef2ff; color: #4f46e5; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.55rem; border-radius: 999px; white-space: nowrap; margin-top: 0.15rem; }
+    .time-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .flex-spacer { flex: 1; }
+    .mini-btn { border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.75rem; cursor: pointer; }
+    .mini-btn:hover { background: #eef2f7; }
+    .time-input { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #cbd5e1; border-radius: 6px; font-family: inherit; }
+    .card.dragging { opacity: 0.45; outline: 2px dashed #6366f1; outline-offset: 2px; }
+    .card a, .card button, .card img { -webkit-user-drag: none; }
+    .list-hint { color: var(--text-secondary); font-size: 0.8125rem; margin: 0 0 0.75rem; line-height: 1.6; }
+    .sel-box { display: inline-flex; align-items: center; padding-top: 0.2rem; }
+    .sel-box input[type="checkbox"] { width: 1.05rem; height: 1.05rem; cursor: pointer; accent-color: #4f46e5; }
+    .sel-info { margin-left: 0.5rem; color: #4f46e5; font-weight: 600; }
+
     .result-fail-item {
       color: var(--error);
       font-size: 0.8125rem;
@@ -485,6 +502,9 @@
         <button class="btn btn-success" id="importAllBtn" onclick="document.getElementById('bundleFileInput').click()">
           🗂️ 导入所有ZIP包
         </button>
+        <button class="btn btn-warning" id="printSelectedBtn" onclick="printSelectedRecords()" disabled>
+          🖨️ 一键打印选中记录
+        </button>
       </div>
       <input type="file" id="bundleFileInput" accept=".zip" hidden>
     </div>
@@ -499,6 +519,11 @@
       <span class="spinner spinner-dark"></span>
       <p style="margin-top: 1rem;">加载中...</p>
     </div>
+
+    <p id="listHint" class="list-hint hidden">💡 提示：按住卡片可上下拖动调整各节顺序（也可用 ↑ ↓ 按钮，方便补录后放到预期位置）；点击「✏️ 改时间」可修改显示时间（只改显示，不移动卡片）；勾选卡片后可批量打印。
+      <span id="selInfo" class="sel-info">未选择</span>
+      <button class="mini-btn" id="selectAllBtn" style="margin-left: 0.5rem;">全选</button>
+    </p>
 
     <div id="historyList" class="hidden"></div>
 
@@ -599,7 +624,7 @@
   <script>
     const userToken = localStorage.getItem('user_token');
     const username = localStorage.getItem('username');
-    const FRONTEND_VERSION = '2026-10-29a';
+    const FRONTEND_VERSION = '2026-10-29c';
 
     if (!userToken) {
       window.location.href = '/login.html';
@@ -663,6 +688,7 @@
 
         if (history.length === 0) {
           empty.classList.remove('hidden');
+          document.getElementById('listHint').classList.add('hidden');
           list.innerHTML = '';
           return;
         }
@@ -670,16 +696,26 @@
         empty.classList.add('hidden');
         list.classList.remove('hidden');
         list.innerHTML = history.map(record => `
-          <div class="card" id="record-${record.id}">
-            <div class="card-title">${escapeHtml(record.topic)}</div>
-            <div class="meta">
-              ${new Date(record.createdAt).toLocaleString('zh-CN', {
+          <div class="card" id="record-${record.id}" data-id="${record.id}" draggable="true">
+            <div class="card-head">
+              <label class="sel-box"><input type="checkbox" data-action="select" aria-label="选中此记录用于批量打印"></label>
+              <span class="drag-handle" title="按住拖动可调整顺序">⋮⋮</span>
+              <span class="order-num"></span>
+              <div class="card-title">${escapeHtml(record.topic)}</div>
+            </div>
+            <div class="meta time-row">
+              <span class="time-display">${new Date(record.createdAt).toLocaleString('zh-CN', {
                 year: 'numeric',
                 month: '2-digit',
                 day: '2-digit',
                 hour: '2-digit',
                 minute: '2-digit'
-              })}
+              })}</span>
+              <span class="time-edit-wrap"></span>
+              <span class="flex-spacer"></span>
+              <button class="mini-btn" data-action="edit-time" title="修改显示时间（只改显示，不移动位置）">✏️ 改时间</button>
+              <button class="mini-btn" data-action="move-up" title="上移一位">↑</button>
+              <button class="mini-btn" data-action="move-down" title="下移一位">↓</button>
             </div>
             <div class="meta" style="margin-top: 0.25rem;">
               📸 ${record.photoCount} 张照片 ${record.hasSignPhoto ? '· 📋 签到表' : ''}
@@ -697,6 +733,9 @@
             </div>
           </div>
         `).join('');
+        renumberCards();
+        syncSelectionUI();
+        document.getElementById('listHint').classList.remove('hidden');
       } catch (error) {
         loading.classList.add('hidden');
         list.innerHTML = `<div class="card"><p style="color: var(--error);">加载失败，请检查网络连接</p></div>`;
@@ -729,6 +768,9 @@
         }
 
         if (card) card.remove();
+        renumberCards();
+        selectedIds.delete(id);
+        updateSelInfo();
 
         const list = document.getElementById('historyList');
         if (list.children.length === 0) {
@@ -1376,6 +1418,7 @@
         photos,
         signPhoto,
         createdAt: rec.createdAt,
+        sortOrder: rec.sortOrder, // 合集包带来的手动排序信息，导入后保持原位置（无则按时间排）
         importMode: true, // 告知服务端这是导入流程：允许老记录缺少教学过程文本
       };
     }
@@ -1423,6 +1466,380 @@
       }
       bundleZip = null;
       bundleRecords = [];
+    }
+
+    // ====== 卡片排序（拖动/按钮）与时间编辑 ======
+
+    function renumberCards() {
+      const list = document.getElementById('historyList');
+      [...list.children].forEach((card, i) => {
+        const badge = card.querySelector('.order-num');
+        if (badge) badge.textContent = `第${i + 1}节`;
+      });
+    }
+
+    function isoToLocalInput(iso) {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const p = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    // 把当前 DOM 顺序保存到服务端（sortOrder），失败则回读重渲染
+    async function persistOrder() {
+      const list = document.getElementById('historyList');
+      const ids = [...list.children].map(c => c.dataset.id);
+      const cur = currentHistory.map(h => h.id);
+      if (ids.length === cur.length && ids.every((v, i) => v === cur[i])) { renumberCards(); return; }
+      try {
+        const res = await fetch('/api/history/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${userToken}` },
+          body: JSON.stringify({ order: ids }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+        currentHistory = ids.map(id => currentHistory.find(h => h.id === id)).filter(Boolean);
+        renumberCards();
+      } catch (err) {
+        alert('保存顺序失败：' + err.message);
+        loadHistory();
+      }
+    }
+
+    function beginEditTime(card) {
+      const wrap = card.querySelector('.time-edit-wrap');
+      const display = card.querySelector('.time-display');
+      const rec = currentHistory.find(h => h.id === card.dataset.id);
+      if (!rec || !wrap || wrap.dataset.editing) return;
+      wrap.dataset.editing = '1';
+      display.style.display = 'none';
+      wrap.innerHTML =
+        `<input type="datetime-local" class="time-input" value="${isoToLocalInput(rec.createdAt)}">` +
+        `<button class="mini-btn" data-action="save-time" title="保存">💾</button>` +
+        `<button class="mini-btn" data-action="cancel-time" title="取消">✖</button>`;
+      wrap.querySelector('input').focus();
+    }
+
+    function endEditTime(card) {
+      const wrap = card.querySelector('.time-edit-wrap');
+      const display = card.querySelector('.time-display');
+      if (wrap) { delete wrap.dataset.editing; wrap.innerHTML = ''; }
+      if (display) display.style.display = '';
+    }
+
+    async function saveTime(card) {
+      const input = card.querySelector('.time-input');
+      if (!input || !input.value) { alert('请选择时间'); return; }
+      const d = new Date(input.value);
+      if (isNaN(d.getTime())) { alert('时间格式不正确'); return; }
+      try {
+        const res = await fetch(`/api/history/${card.dataset.id}/date`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${userToken}` },
+          body: JSON.stringify({ createdAt: d.toISOString() }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+        loadHistory();
+      } catch (err) {
+        alert('保存时间失败：' + err.message);
+      }
+    }
+
+    document.getElementById('historyList').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const card = btn.closest('.card');
+      if (!card) return;
+      const list = document.getElementById('historyList');
+      const action = btn.dataset.action;
+      if (action === 'edit-time') beginEditTime(card);
+      else if (action === 'cancel-time') endEditTime(card);
+      else if (action === 'save-time') saveTime(card);
+      else if (action === 'move-up') {
+        const prev = card.previousElementSibling;
+        if (prev) { list.insertBefore(card, prev); persistOrder(); }
+      }
+      else if (action === 'move-down') {
+        const next = card.nextElementSibling;
+        if (next) { list.insertBefore(next, card); persistOrder(); }
+      }
+    });
+
+    // HTML5 拖拽排序（鼠标）；触屏设备用 ↑↓ 按钮替代
+    function getDragAfterElement(clientY) {
+      const list = document.getElementById('historyList');
+      const cards = [...list.children].filter(c => !c.classList.contains('dragging'));
+      return cards.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = clientY - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) return { offset, element: child };
+        return closest;
+      }, { offset: -Infinity }).element;
+    }
+
+    (function initCardDrag() {
+      const list = document.getElementById('historyList');
+      list.addEventListener('dragstart', (e) => {
+        const card = e.target.closest('.card');
+        if (!card) return;
+        card.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', card.dataset.id);
+      });
+      list.addEventListener('dragover', (e) => {
+        const dragging = list.querySelector('.dragging');
+        if (!dragging) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const after = getDragAfterElement(e.clientY);
+        if (after == null) list.appendChild(dragging);
+        else list.insertBefore(dragging, after);
+        renumberCards();
+      });
+      list.addEventListener('drop', (e) => {
+        if (list.querySelector('.dragging')) e.preventDefault();
+      });
+      list.addEventListener('dragend', () => {
+        const dragging = list.querySelector('.dragging');
+        if (dragging) dragging.classList.remove('dragging');
+        persistOrder();
+      });
+    })();
+
+    // ====== 勾选记录 + 一键打印选中记录 ======
+    const selectedIds = new Set();
+
+    // 教学过程照片标记（与 index.html / server.js 同一套规则）
+    const PHOTO_MARKER_RE = /\[图(\d+)\]/g;
+    const PHOTO_MARKER_VARIANT_RE = /[【\[]\s*(?:图|图片|照片)\s*(\d+)\s*[】\]]/g;
+
+    function normalizePhotoMarkers(text, photoCount) {
+      if (!text) return '';
+      let out = String(text).replace(PHOTO_MARKER_VARIANT_RE, (m, n) => `[图${n}]`);
+      out = out.replace(PHOTO_MARKER_RE, (m, n) => (Number(n) >= 1 && Number(n) <= photoCount) ? m : '');
+      return out;
+    }
+
+    function parseProcessBlocks(text) {
+      const blocks = [];
+      const paragraphs = String(text || '').split(/\n\s*\n/);
+      for (const para of paragraphs) {
+        const parts = para.split(PHOTO_MARKER_RE);
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 0) {
+            const t = parts[i].replace(/\s*\n\s*/g, ' ').trim();
+            if (t) blocks.push({ type: 'text', text: t });
+          } else {
+            blocks.push({ type: 'image', n: Number(parts[i]) });
+          }
+        }
+      }
+      return blocks;
+    }
+
+    function appendUnreferencedPhotos(blocks, photoCount) {
+      const used = new Set(blocks.filter(b => b.type === 'image').map(b => b.n));
+      const extra = [];
+      for (let n = 1; n <= photoCount; n++) {
+        if (!used.has(n)) extra.push({ type: 'image', n, appended: true });
+      }
+      return extra;
+    }
+
+    function syncSelectionUI() {
+      document.querySelectorAll('#historyList input[data-action="select"]').forEach(box => {
+        box.checked = selectedIds.has(box.closest('.card').dataset.id);
+      });
+      updateSelInfo();
+    }
+
+    function updateSelInfo() {
+      const total = document.querySelectorAll('#historyList .card').length;
+      const n = selectedIds.size;
+      const info = document.getElementById('selInfo');
+      const selAllBtn = document.getElementById('selectAllBtn');
+      const printBtn = document.getElementById('printSelectedBtn');
+      if (info) info.textContent = n ? `已选 ${n} 条` : '未选择';
+      if (selAllBtn) selAllBtn.textContent = (n > 0 && n >= total) ? '取消全选' : '全选';
+      if (printBtn) printBtn.disabled = n === 0;
+      if (printBtn) printBtn.textContent = n > 1 ? `🖨️ 一键打印选中记录(${n}条)` : '🖨️ 一键打印选中记录';
+    }
+
+    document.getElementById('historyList').addEventListener('change', (e) => {
+      if (!e.target.matches('input[data-action="select"]')) return;
+      const id = e.target.closest('.card').dataset.id;
+      if (e.target.checked) selectedIds.add(id); else selectedIds.delete(id);
+      updateSelInfo();
+    });
+
+    document.getElementById('selectAllBtn').addEventListener('click', () => {
+      const cards = document.querySelectorAll('#historyList .card');
+      const allSelected = selectedIds.size > 0 && selectedIds.size >= cards.length;
+      selectedIds.clear();
+      if (!allSelected) cards.forEach(c => selectedIds.add(c.dataset.id));
+      syncSelectionUI();
+    });
+
+    // 从记录 ZIP 中提取打印素材：照片(dataUrl+说明,按下标) 与 签到表(dataUrl)
+    async function extractPrintDataFromZip(zip) {
+      const photoJobs = new Map();   // n -> Promise<dataUrl>
+      const captionJobs = new Map(); // n -> Promise<caption>
+      let signJob = null;
+      zip.forEach((path, fe) => {
+        if (fe.dir) return;
+        if (path.includes('场景照片/')) {
+          const fn = path.split('场景照片/')[1];
+          if (!fn) return;
+          let m = fn.match(/^照片(\d+)_说明\.txt$/);
+          if (m) { captionJobs.set(Number(m[1]), fe.async('text')); return; }
+          m = fn.match(/^照片(\d+)\.(jpe?g|png)$/i);
+          if (m) {
+            const mime = m[2].toLowerCase() === 'png' ? 'png' : 'jpeg';
+            photoJobs.set(Number(m[1]), fe.async('base64').then(b => `data:image/${mime};base64,${b}`));
+          }
+        } else if (path.includes('签到表/') && /\.(jpe?g|png)$/i.test(path)) {
+          const mime = /\.png$/i.test(path) ? 'png' : 'jpeg';
+          signJob = fe.async('base64').then(b => `data:image/${mime};base64,${b}`);
+        }
+      });
+      const maxN = photoJobs.size ? Math.max(...photoJobs.keys()) : 0;
+      const photos = [];
+      for (let n = 1; n <= maxN; n++) {
+        photos.push(photoJobs.has(n)
+          ? { url: await photoJobs.get(n), caption: captionJobs.has(n) ? await captionJobs.get(n) : '' }
+          : null);
+      }
+      return { photos, signUrl: signJob ? await signJob : null };
+    }
+
+    // 单条记录的图文正文（与首页"一键打印"排版一致）
+    function buildMaterialBodyHtml(processText, photos) {
+      const normalized = normalizePhotoMarkers(processText, photos.length);
+      const base = parseProcessBlocks(normalized);
+      const blocks = base.concat(appendUnreferencedPhotos(base, photos.length));
+      let body = '';
+      let extraStarted = false;
+      for (const b of blocks) {
+        if (b.type === 'text') {
+          body += `<p>${escapeHtml(b.text)}</p>`;
+        } else {
+          const ph = photos[b.n - 1];
+          if (!ph) continue;
+          if (b.appended && !extraStarted) { body += `<p class="pv-label">其余课堂照片</p>`; extraStarted = true; }
+          body += `<figure><img src="${ph.url}"><figcaption>图${b.n}${ph.caption ? '：' + escapeHtml(ph.caption) : ''}</figcaption></figure>`;
+        }
+      }
+      return body;
+    }
+
+    // 多条记录合成一份打印文档：每条记录从新页开始，各自的签到表独占整页 A4
+    function buildMultiPrintHtml(items) {
+      const sections = items.map((it, i) => `
+  <section class="material${i > 0 ? ' new-record' : ''}">
+    <h1>${escapeHtml(it.topic)} — 教学过程设计</h1>
+    <div class="date">${escapeHtml(it.dateStr)}</div>
+    ${buildMaterialBodyHtml(it.processText, it.photos)}
+  </section>
+  ${it.signUrl ? `<div class="sign-page"><img src="${it.signUrl}" alt="签到表"></div>` : ''}`).join('\n');
+
+      return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>社团材料 - 批量打印</title><style>
+  @page { size: A4; margin: 16mm 18mm; }
+  @page signpage { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: '宋体', 'SimSun', serif; color: #000; font-size: 12pt; line-height: 1.9; margin: 0; }
+  h1 { font-family: '黑体', 'SimHei', sans-serif; font-size: 16pt; text-align: center; margin: 0 0 6pt; }
+  .date { text-align: center; color: #444; font-size: 10.5pt; margin-bottom: 16pt; }
+  p { text-indent: 2em; margin: 6pt 0; text-align: justify; }
+  .pv-label { text-indent: 0; text-align: center; font-weight: bold; margin-top: 14pt; }
+  figure { text-align: center; margin: 10pt 0; page-break-inside: avoid; }
+  figure img { max-width: 100%; max-height: 110mm; object-fit: contain; }
+  figcaption { font-size: 9.5pt; color: #444; margin-top: 3pt; }
+  .material.new-record { page-break-before: always; }
+  .sign-page { page: signpage; page-break-before: always; width: 210mm; height: 296mm; display: flex; align-items: center; justify-content: center; }
+  .sign-page img { width: 100%; height: 100%; object-fit: contain; }
+</style></head><body>
+${sections}
+</body></html>`;
+    }
+
+    function printViaIframe(html) {
+      const old = document.getElementById('printFrame');
+      if (old) old.remove();
+      const iframe = document.createElement('iframe');
+      iframe.id = 'printFrame';
+      iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+      document.body.appendChild(iframe);
+      iframe.onload = () => {
+        const win = iframe.contentWindow;
+        if (!win) return;
+        const imgs = Array.from(win.document.images || []);
+        const waitAll = imgs.map(img => img.complete
+          ? Promise.resolve()
+          : new Promise(r => { img.onload = r; img.onerror = r; }));
+        Promise.all(waitAll).then(() => {
+          setTimeout(() => { win.focus(); win.print(); }, 200);
+        });
+      };
+      iframe.srcdoc = html;
+    }
+
+    async function preparePrintItem(record) {
+      const res = await fetch(`/api/export/${record.id}/download?token=${userToken}`);
+      if (!res.ok) throw new Error('ZIP 下载失败(HTTP ' + res.status + ')');
+      const zip = await JSZip.loadAsync(await res.blob());
+      const data = await extractPrintDataFromZip(zip);
+      return {
+        topic: record.topic,
+        dateStr: new Date(record.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+        processText: record.teachingProcess || '',
+        photos: data.photos,
+        signUrl: data.signUrl,
+      };
+    }
+
+    async function printSelectedRecords() {
+      // 按卡片当前顺序打印
+      const records = currentHistory.filter(h => selectedIds.has(h.id));
+      if (records.length === 0) return;
+
+      const btn = document.getElementById('printSelectedBtn');
+      btn.disabled = true;
+      const original = btn.innerHTML;
+      const items = [];
+      const failed = [];
+
+      try {
+        for (let i = 0; i < records.length; i++) {
+          btn.innerHTML = `<span class="spinner"></span> 准备 ${i + 1}/${records.length}...`;
+          try {
+            items.push(await preparePrintItem(records[i]));
+          } catch (e) {
+            failed.push(`${records[i].topic}：${e.message}`);
+          }
+        }
+
+        if (items.length === 0) {
+          alert('以下记录无法打印：\n' + failed.join('\n'));
+          return;
+        }
+
+        printViaIframe(buildMultiPrintHtml(items));
+
+        if (failed.length > 0) {
+          const hint = document.getElementById('listHint');
+          const warn = document.createElement('span');
+          warn.style.color = 'var(--error)';
+          warn.textContent = `　⚠️ ${failed.length} 条打印失败：${failed.join('；')}`;
+          hint.appendChild(warn);
+          setTimeout(() => warn.remove(), 10000);
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+        updateSelInfo();
+      }
     }
 
     loadHistory();

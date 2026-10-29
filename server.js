@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'shetuandabao-secret-key-2024';
 const SERVER_STARTED_AT = new Date().toISOString();
 // 前后端同源版本号：改代码时同步更新，/api/health、/api/system/info、页面页脚均可核对
-const SERVER_VERSION = '2026-10-29a';
+const SERVER_VERSION = '2026-10-29c';
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -189,6 +189,15 @@ function fitPageImageSize(width, height, maxWidth = 780, maxHeight = 1100) {
   return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
+// ====== 历史记录排序键：sortOrder(手动拖动排序)优先，否则按时间倒序派生 ======
+// 显示时间(createdAt)与卡片位置(sortOrder)解耦：改时间不移动卡片，拖动不改显示时间。
+// 派生键取 -时间戳：时间越新键越小，列表升序排列时越靠前（顶部）。
+function sortKeyOf(r) {
+  if (typeof r.sortOrder === 'number' && isFinite(r.sortOrder)) return r.sortOrder;
+  const t = new Date(r.createdAt).getTime();
+  return -(isNaN(t) ? 0 : t);
+}
+
 // ====== 数据写互斥：串行化所有「读-改-写」操作 ======
 // POST /api/export 的 读history → 生成docx/zip(有await) → 写history 之间，
 // 事件循环会放行其他请求；若两个请求同时处于该窗口，后写者会用旧快照覆盖
@@ -291,7 +300,7 @@ app.post('/api/user/login', async (req, res) => {
 
 app.post('/api/export', authenticateUser, async (req, res) => {
   try {
-    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto, createdAt: clientCreatedAt, importMode } = req.body;
+    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto, createdAt: clientCreatedAt, sortOrder: clientSortOrder, importMode } = req.body;
     if (!topic || !summary) {
       return res.status(400).json({ error: '请提供课题名称和总结' });
     }
@@ -314,9 +323,16 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       }
     }
 
-    // 批量导入合集包时会传入原始 createdAt，用于还原记录的原始时间（仅新建时生效）
-    const providedDate = (!existingRecordId && clientCreatedAt) ? new Date(clientCreatedAt) : null;
-    const baseDate = (providedDate && !isNaN(providedDate.getTime())) ? providedDate : new Date();
+    // 批量导入/编辑可传入 createdAt：新建用于还原原始时间；编辑用于显式改时间
+    let providedDate = clientCreatedAt ? new Date(clientCreatedAt) : null;
+    if (providedDate && isNaN(providedDate.getTime())) providedDate = null;
+    // 编辑模式默认保留记录原时间（不再重置为当前时间，否则会打乱手动排好的顺序）
+    let baseDate = providedDate;
+    if (!baseDate && isEdit && record && record.createdAt) {
+      const orig = new Date(record.createdAt);
+      if (!isNaN(orig.getTime())) baseDate = orig;
+    }
+    if (!baseDate) baseDate = new Date();
     const date = baseDate.toISOString().slice(0, 10).replace(/-/g, '');
     const recordId = isEdit ? existingRecordId : ('h_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
     const zipFileName = `${topic}_${date}_${recordId}.zip`;
@@ -525,7 +541,8 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       record.photoCount = photos ? photos.length : 0;
       record.hasSignPhoto = !!signPhoto;
       record.zipFileName = zipFileName;
-      record.createdAt = new Date().toISOString();
+      record.createdAt = baseDate.toISOString(); // 编辑默认保留原时间（除非请求显式传入新时间）
+      // 注意：record.sortOrder 不动，编辑不会改变卡片位置
     } else {
       const newRecord = {
         id: recordId,
@@ -538,6 +555,10 @@ app.post('/api/export', authenticateUser, async (req, res) => {
         createdAt: baseDate.toISOString(),
         zipFileName,
       };
+      // 合集包导入时可带 sortOrder，迁移后保持源端的卡片顺序
+      if (typeof clientSortOrder === 'number' && isFinite(clientSortOrder)) {
+        newRecord.sortOrder = clientSortOrder;
+      }
       history.push(newRecord);
     }
     saveHistory(history);
@@ -565,7 +586,7 @@ app.get('/api/export/download-all', authenticateUser, async (req, res) => {
     const history = loadHistory();
     const userRecords = history
       .filter(h => h.userId === req.user.userId)
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)); // 按时间正序排列，导入后顺序一致
+      .sort((a, b) => (sortKeyOf(a) - sortKeyOf(b)) || (new Date(a.createdAt) - new Date(b.createdAt))); // 按用户排列的卡片顺序打包，导入后顺序一致
 
     if (userRecords.length === 0) {
       return res.status(404).json({ error: '暂无导出记录，无法打包下载' });
@@ -593,6 +614,7 @@ app.get('/api/export/download-all', authenticateUser, async (req, res) => {
         photoCount: record.photoCount,
         hasSignPhoto: record.hasSignPhoto,
         createdAt: record.createdAt,
+        sortOrder: typeof record.sortOrder === 'number' ? record.sortOrder : undefined, // 手动排序信息，导入后还原位置
       });
     }
 
@@ -636,7 +658,7 @@ app.get('/api/history', authenticateUser, (req, res) => {
   const history = loadHistory();
   const userHistory = history
     .filter(h => h.userId === req.user.userId)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort((a, b) => (sortKeyOf(a) - sortKeyOf(b)) || (new Date(b.createdAt) - new Date(a.createdAt)));
   res.json(userHistory);
 });
 
@@ -659,6 +681,65 @@ app.delete('/api/history/:recordId', authenticateUser, (req, res) => {
   }).catch(error => {
     console.error('Delete history error:', error.message);
     res.status(500).json({ error: '删除失败: ' + error.message });
+  });
+});
+
+// 修改记录显示时间（只改显示，不移动卡片位置——位置由拖动排序决定）
+app.put('/api/history/:recordId/date', authenticateUser, (req, res) => {
+  const d = (req.body && req.body.createdAt) ? new Date(req.body.createdAt) : null;
+  if (!d || isNaN(d.getTime())) return res.status(400).json({ error: '无效的时间' });
+
+  runExclusive(() => {
+    const history = loadHistory();
+    const record = history.find(h => h.id === req.params.recordId && h.userId === req.user.userId);
+    if (!record) {
+      res.status(404).json({ error: '记录不存在' });
+      return;
+    }
+    // 若该记录还没有固定位置（sortOrder），先冻结当前位置，保证改时间后卡片不动
+    if (typeof record.sortOrder !== 'number') {
+      record.sortOrder = sortKeyOf(record);
+    }
+    record.createdAt = d.toISOString();
+    saveHistory(history);
+    res.json({ message: '时间已更新', record });
+  }).catch(error => {
+    console.error('Update date error:', error.message);
+    res.status(500).json({ error: '修改时间失败: ' + error.message });
+  });
+});
+
+// 卡片拖动排序：order 为自上而下的记录 id 序列，服务端按此顺序分配严格递增的排序键
+app.post('/api/history/reorder', authenticateUser, (req, res) => {
+  const raw = (req.body && Array.isArray(req.body.order)) ? req.body.order : null;
+  if (!raw || raw.length === 0) return res.status(400).json({ error: '请提供记录顺序' });
+
+  runExclusive(() => {
+    const history = loadHistory();
+    const mine = history.filter(h => h.userId === req.user.userId);
+    const byId = new Map(mine.map(h => [h.id, h]));
+    const seq = [];
+    const seen = new Set();
+    for (const id of raw.map(String)) {
+      if (byId.has(id) && !seen.has(id)) { seen.add(id); seq.push(byId.get(id)); }
+    }
+    if (seq.length === 0) {
+      res.status(400).json({ error: '没有可排序的记录' });
+      return;
+    }
+    // 保证排序键自上而下严格递增：只调整违反顺序的记录，改动最小化
+    let changed = 0;
+    let prev = -Infinity;
+    for (const rec of seq) {
+      let k = sortKeyOf(rec);
+      if (k <= prev) { k = prev + 1; rec.sortOrder = k; changed++; }
+      prev = k;
+    }
+    if (changed > 0) saveHistory(history);
+    res.json({ message: '顺序已保存', updated: changed });
+  }).catch(error => {
+    console.error('Reorder error:', error.message);
+    res.status(500).json({ error: '保存顺序失败: ' + error.message });
   });
 });
 
