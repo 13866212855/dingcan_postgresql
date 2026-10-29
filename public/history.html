@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>历史记录 · 氛围编程</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="/vendor/jszip.min.js"></script>
   <style>
     :root {
       --primary: #6366f1;
@@ -315,6 +315,8 @@
 
     .result-ok { background: #ecfdf5; color: #065f46; }
 
+    .result-warn { background: #fffbeb; color: #92400e; }
+
     .result-fail-item {
       color: var(--error);
       font-size: 0.8125rem;
@@ -507,6 +509,8 @@
       <a href="index.html" class="btn btn-primary">去收集资料</a>
     </div>
 
+    <div id="srvInfo" style="margin-top: 2rem; padding: 0.5rem 1rem 1.5rem; text-align: center; color: #94a3b8; font-size: 0.75rem; line-height: 1.5;"></div>
+
     <!-- Import Modal -->
     <div id="importModal" class="hidden">
       <div class="modal-backdrop" onclick="closeImportModal()"></div>
@@ -595,12 +599,31 @@
   <script>
     const userToken = localStorage.getItem('user_token');
     const username = localStorage.getItem('username');
+    const FRONTEND_VERSION = '2026-10-29a';
 
     if (!userToken) {
       window.location.href = '/login.html';
     }
 
     document.getElementById('currentUser').textContent = username;
+
+    // ====== 服务实例状态页脚：核对前后端版本与实例身份，暴露"连错实例/未重新部署"类问题 ======
+    async function refreshServerInfo() {
+      const box = document.getElementById('srvInfo');
+      try {
+        const res = await fetch('/api/system/info', {
+          headers: { 'Authorization': `Bearer ${userToken}` },
+        });
+        if (!res.ok) { box.textContent = `前端版本 ${FRONTEND_VERSION} · 服务端版本未知(${res.status})`; return; }
+        const info = await res.json();
+        const started = new Date(info.serverStartedAt).toLocaleString('zh-CN', { hour12: false });
+        const mismatch = info.version !== FRONTEND_VERSION ? ' ⚠️ 前后端版本不一致，请按 Ctrl+F5 强制刷新或重新部署' : '';
+        box.textContent = `服务实例 ${info.hostname}/pid ${info.pid} · ${started} 启动 · 服务器记录总数 ${info.historyTotalCount} · 服务端 v${info.version} · 前端 v${FRONTEND_VERSION}${mismatch}`;
+      } catch {
+        box.textContent = `前端版本 ${FRONTEND_VERSION} · 无法连接服务端`;
+      }
+    }
+    refreshServerInfo();
 
     // ====== Import ZIP state ======
     let importData = null;
@@ -1127,12 +1150,36 @@
       showBundleModal('form');
     }
 
+    // 拉取当前服务实例指纹（hostname/pid/启动时间/记录数），用于诊断"连错实例"
+    async function fetchInstanceInfo() {
+      try {
+        const res = await fetch('/api/system/info', {
+          headers: { 'Authorization': `Bearer ${userToken}` },
+        });
+        if (!res.ok) return null;
+        return await res.json();
+      } catch {
+        return null;
+      }
+    }
+
+    function instanceLabel(info) {
+      if (!info) return '未知';
+      return `${info.hostname}/pid ${info.pid}（${new Date(info.serverStartedAt).toLocaleString('zh-CN', { hour12: false })} 启动，共 ${info.historyTotalCount} 条记录）`;
+    }
+
+    function errorIsNetwork(reason) {
+      return /failed to fetch|networkerror|load failed/i.test(String(reason));
+    }
+
     async function confirmBundleImport() {
       const toImport = bundleRecords.filter(r => !r.dup && r.zipExists);
       if (toImport.length === 0) return;
 
+      const confirmBtn = document.getElementById('bundleConfirmBtn');
       bundleImporting = true;
       bundleDone = false;
+      confirmBtn.disabled = true; // 防双击：并发触发两次导入会互相覆盖写入
       document.getElementById('bundleActions').classList.add('hidden');
       document.getElementById('bundleResult').classList.add('hidden');
       const progressBox = document.getElementById('bundleProgress');
@@ -1140,7 +1187,11 @@
       const text = document.getElementById('bundleProgressText');
       progressBox.classList.remove('hidden');
 
+      // 记录导入开始时的服务实例指纹，结束后对比，便于发现"导入和查看连的不是同一个服务"
+      const instanceBefore = await fetchInstanceInfo();
+
       let okCount = 0;
+      const okRecords = [];   // 导入接口返回成功的记录（用于回读核对）
       const failed = [];
 
       for (let i = 0; i < toImport.length; i++) {
@@ -1157,22 +1208,76 @@
             },
             body: JSON.stringify(payload),
           });
-          const data = await res.json();
+          let data = {};
+          try { data = await res.json(); } catch { /* 非JSON响应(如网关错误页) */ }
           if (!res.ok || data.error) {
-            throw new Error(data.error || ('HTTP ' + res.status));
+            let reason = data.error || ('HTTP ' + res.status);
+            if (res.status === 413) reason = '请求数据过大（照片太多或太大），服务器拒绝';
+            else if (errorIsNetwork(reason)) reason = '无法连接服务器（可能服务器正在重启或网络中断）';
+            throw new Error(reason);
           }
           okCount++;
+          okRecords.push(rec);
         } catch (error) {
           failed.push({ topic: rec.topic, reason: error.message });
         }
       }
 
       fill.style.width = '100%';
+
+      // ====== 验证回读：重新拉取历史，逐条核对刚导入的记录确实已持久化 ======
+      // 防止"导入显示成功、刷新后记录消失"被静默吞掉
+      text.textContent = '正在校验服务器持久化...';
+      let verifiedCount = 0;
+      const missing = [];
+      if (okCount > 0) {
+        try {
+          const vres = await fetch('/api/history', {
+            headers: { 'Authorization': `Bearer ${userToken}` },
+          });
+          if (vres.ok) {
+            const serverHistory = await vres.json();
+            currentHistory = serverHistory;
+            for (const rec of okRecords) {
+              const ts = rec.createdAt ? new Date(rec.createdAt).getTime() : NaN;
+              const found = serverHistory.some(h =>
+                h.topic === rec.topic &&
+                h.createdAt &&
+                new Date(h.createdAt).getTime() === ts
+              );
+              if (found) verifiedCount++;
+              else missing.push(rec.topic || '未命名课题');
+            }
+          } else {
+            missing.push(...okRecords.map(r => r.topic || '未命名课题'));
+          }
+        } catch {
+          missing.push(...okRecords.map(r => r.topic || '未命名课题'));
+        }
+      }
+
+      const instanceAfter = await fetchInstanceInfo();
+      const instanceChanged = instanceBefore && instanceAfter &&
+        (instanceBefore.hostname !== instanceAfter.hostname ||
+          instanceBefore.pid !== instanceAfter.pid);
+
       text.textContent = '导入完成';
 
       const result = document.getElementById('bundleResult');
       result.classList.remove('hidden');
-      let resultHtml = `<div class="result-box result-ok">✅ 成功导入 ${okCount} 条${failed.length ? `，失败 ${failed.length} 条` : ''}</div>`;
+      let resultHtml;
+      if (okCount > 0 && verifiedCount === okCount) {
+        resultHtml = `<div class="result-box result-ok">✅ 成功导入 ${okCount} 条，已在服务器确认持久化${failed.length ? `；失败 ${failed.length} 条` : ''}</div>`;
+      } else if (okCount === 0) {
+        resultHtml = `<div class="result-box result-warn">没有记录导入成功</div>`;
+      } else {
+        resultHtml = `<div class="result-box result-warn">导入接口成功 ${okCount} 条，但只有 ${verifiedCount} 条在服务器上确认到（${missing.length} 条刷新后可能看不到）</div>`;
+        if (instanceChanged) {
+          resultHtml += `<div class="result-box result-warn">🚨 导入前后连接的服务实例不一致：${escapeHtml(instanceLabel(instanceBefore))} → ${escapeHtml(instanceLabel(instanceAfter))}。本地 3000 端口与 Docker 7794 端口是两套独立数据，请确认地址栏端口后重新导入。</div>`;
+        } else {
+          resultHtml += `<div class="result-box result-warn">当前实例：${escapeHtml(instanceLabel(instanceAfter))}。未确认的记录可能被并发操作覆盖，请重新导入一次；若反复出现请保留本提示截图反馈。</div>`;
+        }
+      }
       if (failed.length) {
         resultHtml += failed.map(f =>
           `<div class="result-fail-item">❌ ${escapeHtml(f.topic)}：${escapeHtml(f.reason)}</div>`
@@ -1182,13 +1287,21 @@
 
       // 恢复按钮为“完成”
       document.getElementById('bundleActions').classList.remove('hidden');
-      const confirmBtn = document.getElementById('bundleConfirmBtn');
       confirmBtn.disabled = false;
       confirmBtn.textContent = '完成';
 
       bundleImporting = false;
       bundleDone = true;
       loadHistory(); // 刷新背后的历史列表
+      refreshServerInfo();
+
+      // 结果必须被看见：滚动到结果区；有失败时再弹窗强提示，避免"失败清单被折叠在底部没注意到"
+      result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (okCount === 0 && toImport.length > 0) {
+        alert(`导入全部失败（${toImport.length} 条）！\n\n第一条失败原因：${failed[0] ? failed[0].reason : '未知'}\n\n详情见弹窗中的失败清单。数据没有写入服务器，请勿继续操作并截图反馈。`);
+      } else if (missing.length > 0) {
+        alert(`注意：${missing.length} 条记录导入后未在服务器确认到，刷新后可能消失！\n\n详情见弹窗中的黄色警告。`);
+      }
     }
 
     // 从合集包中的内层 ZIP 提取照片/签到表，组装成 /api/export 的请求体
@@ -1218,6 +1331,8 @@
       // 第二遍：收集照片和签到表
       const photos = [];
       let signPhoto = null;
+      let summaryDocxEntry = null;
+      let processDocxEntry = null;
       for (const [p, fe] of Object.entries(inner.files)) {
         if (fe.dir) continue;
         const rel = rootFolder ? p.replace(rootFolder, '') : p;
@@ -1241,20 +1356,46 @@
               data: await blobToBase64(await fe.async('blob')),
             };
           }
+        } else if (rel.endsWith('学习成果总结.docx')) {
+          summaryDocxEntry = fe;
+        } else if (rel.endsWith('教学过程设计.docx')) {
+          processDocxEntry = fe;
         }
       }
 
+      // 老版本记录的清单里可能没有 summary/teachingProcess 字段——从内层 docx 原文还原
+      let summary = rec.summary || '';
+      let teachingProcess = rec.teachingProcess || '';
+      if (!summary.trim() && summaryDocxEntry) summary = await docxTextFromZip(summaryDocxEntry);
+      if (!teachingProcess.trim() && processDocxEntry) teachingProcess = await docxTextFromZip(processDocxEntry);
+
       return {
         topic: rec.topic,
-        summary: rec.summary,
-        teachingProcess: rec.teachingProcess,
+        summary,
+        teachingProcess,
         photos,
         signPhoto,
         createdAt: rec.createdAt,
+        importMode: true, // 告知服务端这是导入流程：允许老记录缺少教学过程文本
       };
     }
 
+    // 从 docx（ZIP 包内的 word/document.xml）提取纯文本
+    async function docxTextFromZip(entry) {
+      try {
+        const data = await entry.async('uint8array');
+        const dz = await JSZip.loadAsync(data);
+        const xmlEntry = dz.file('word/document.xml');
+        if (!xmlEntry) return '';
+        return extractDocxText(await xmlEntry.async('text'));
+      } catch (e) {
+        console.warn('docx 文本提取失败:', e);
+        return '';
+      }
+    }
+
     function onBundleConfirmClick() {
+      if (bundleImporting) return; // 导入进行中忽略重复点击（防并发覆盖）
       if (bundleDone) {
         closeBundleModal();
         return;

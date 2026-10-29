@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>氛围编程 · 社团资料收集</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://unpkg.com/docx@8.2.2/build/index.umd.js"></script>
+  <script src="/vendor/jszip.min.js"></script>
+  <script src="/vendor/docx.umd.js"></script>
   <style>
     :root {
       --primary: #6366f1;
@@ -230,6 +230,68 @@
       display: flex;
       gap: 0.5rem;
       margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    /* 教学过程图文标记提示 + 图文预览 */
+    .marker-hint {
+      color: var(--text-secondary);
+      font-size: 0.8125rem;
+      margin: 0.5rem 0 0;
+      line-height: 1.6;
+    }
+
+    .process-preview {
+      margin-top: 1rem;
+      padding: 1.25rem 1.5rem;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .process-preview h4 {
+      margin: 0 0 0.75rem;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    .process-preview p {
+      text-indent: 2em;
+      font-size: 0.9375rem;
+      line-height: 1.9;
+      margin: 0.375rem 0;
+      text-align: justify;
+      color: #1e293b;
+    }
+
+    .process-preview figure {
+      text-align: center;
+      margin: 0.875rem auto;
+    }
+
+    .process-preview figure img {
+      max-width: 100%;
+      max-height: 240px;
+      object-fit: contain;
+      border-radius: 6px;
+      border: 1px solid #eef2f7;
+    }
+
+    .process-preview figcaption {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      margin-top: 0.25rem;
+    }
+
+    .pv-extra {
+      text-align: center;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-top: 1rem;
     }
 
     .validation-msg {
@@ -409,9 +471,14 @@
     <div class="card">
       <div class="card-title"><span class="icon">📋</span> 教学过程描述</div>
       <textarea id="teachingProcess" placeholder="AI将根据学习成果总结生成教学过程描述，您也可以手动编辑..."></textarea>
+      <p class="marker-hint">💡 在文中写上 <b>[图1]、[图2]…</b> 可把对应序号的场景照片插入到该位置（AI 生成时会自动插入）。导出的 Word 与打印稿中会替换为真实照片，排版效果见下方预览。</p>
+      <div id="processPreview" class="process-preview hidden"></div>
       <div class="actions">
         <button class="btn btn-ai" id="aiProcessBtn" onclick="generateTeachingProcess()">
           ✨ AI 生成教学过程
+        </button>
+        <button class="btn btn-secondary" id="printBtn" onclick="printMaterials()">
+          🖨️ 一键打印本节材料
         </button>
       </div>
     </div>
@@ -544,6 +611,7 @@
         photoGrid.appendChild(div);
       });
       photoCount.textContent = `已上传 ${photos.length} 张照片`;
+      renderProcessPreview();
     }
 
     function renderSign() {
@@ -573,6 +641,203 @@
     function updateCaption(id, value) {
       const photo = photos.find(p => p.id === id);
       if (photo) photo.caption = value;
+      renderProcessPreview();
+    }
+
+    // ====== 教学过程"图文并茂"：[图N] 标记解析（与服务端 server.js 保持一致） ======
+    const PHOTO_MARKER_RE = /\[图(\d+)\]/g;
+    const PHOTO_MARKER_VARIANT_RE = /[【\[]\s*(?:图|图片|照片)\s*(\d+)\s*[】\]]/g;
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function normalizePhotoMarkers(text, photoCount) {
+      if (!text) return '';
+      let out = String(text).replace(PHOTO_MARKER_VARIANT_RE, (m, n) => `[图${n}]`);
+      out = out.replace(PHOTO_MARKER_RE, (m, n) => (Number(n) >= 1 && Number(n) <= photoCount) ? m : '');
+      return out;
+    }
+
+    function parseProcessBlocks(text) {
+      const blocks = [];
+      const paragraphs = String(text || '').split(/\n\s*\n/);
+      for (const para of paragraphs) {
+        const parts = para.split(PHOTO_MARKER_RE);
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 0) {
+            const t = parts[i].replace(/\s*\n\s*/g, ' ').trim();
+            if (t) blocks.push({ type: 'text', text: t });
+          } else {
+            blocks.push({ type: 'image', n: Number(parts[i]) });
+          }
+        }
+      }
+      return blocks;
+    }
+
+    // 文中没引用到的照片补到末尾（标记 appended=true，渲染时可加分隔说明）
+    function appendUnreferencedPhotos(blocks, photoCount) {
+      const used = new Set(blocks.filter(b => b.type === 'image').map(b => b.n));
+      const extra = [];
+      for (let n = 1; n <= photoCount; n++) {
+        if (!used.has(n)) extra.push({ type: 'image', n, appended: true });
+      }
+      return extra;
+    }
+
+    function fileToDataUrl(blob) {
+      return new Promise(resolve => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.readAsDataURL(blob);
+      });
+    }
+
+    function buildProcessBlocks(processText, photoList) {
+      const normalized = normalizePhotoMarkers(processText, photoList.length);
+      const base = parseProcessBlocks(normalized);
+      return base.concat(appendUnreferencedPhotos(base, photoList.length));
+    }
+
+    function photoDisplayUrl(photo) {
+      if (!photo.url) photo.url = URL.createObjectURL(photo.file);
+      return photo.url;
+    }
+
+    // ====== 图文排版预览：编辑教学过程或照片变化时实时刷新 ======
+    function renderProcessPreview() {
+      const box = document.getElementById('processPreview');
+      if (!box) return;
+      const text = teachingProcessInput.value.trim();
+      if (!text || photos.length === 0) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+      }
+      const blocks = buildProcessBlocks(text, photos);
+      const parts = ['<h4>📖 图文排版预览</h4>'];
+      let extraStarted = false;
+      for (const b of blocks) {
+        if (b.type === 'text') {
+          parts.push(`<p>${escapeHtml(b.text)}</p>`);
+        } else {
+          const ph = photos[b.n - 1];
+          if (!ph) continue;
+          if (b.appended && !extraStarted) {
+            parts.push('<div class="pv-extra">—— 未在文中引用的照片 ——</div>');
+            extraStarted = true;
+          }
+          parts.push(`<figure><img src="${photoDisplayUrl(ph)}" alt="图${b.n}"><figcaption>图${b.n}${ph.caption ? '：' + escapeHtml(ph.caption) : ''}</figcaption></figure>`);
+        }
+      }
+      box.innerHTML = parts.join('');
+      box.classList.remove('hidden');
+    }
+
+    teachingProcessInput.addEventListener('input', renderProcessPreview);
+
+    // ====== 一键打印：图文教学过程 + 签到表（签到表独占一整页 A4） ======
+    function buildPrintHtml(topic, processText, photoData, signUrl) {
+      const blocks = buildProcessBlocks(processText, photoData);
+      let body = '';
+      let extraStarted = false;
+      for (const b of blocks) {
+        if (b.type === 'text') {
+          body += `<p>${escapeHtml(b.text)}</p>`;
+        } else {
+          const ph = photoData[b.n - 1];
+          if (!ph) continue;
+          if (b.appended && !extraStarted) {
+            body += `<p class="pv-label">其余课堂照片</p>`;
+            extraStarted = true;
+          }
+          body += `<figure><img src="${ph.url}"><figcaption>图${b.n}${ph.caption ? '：' + escapeHtml(ph.caption) : ''}</figcaption></figure>`;
+        }
+      }
+      const dateStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+      const signPage = signUrl
+        ? `<div class="sign-page"><img src="${signUrl}" alt="签到表"></div>`
+        : '';
+      return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(topic)} - 打印</title><style>
+  @page { size: A4; margin: 16mm 18mm; }
+  @page signpage { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: '宋体', 'SimSun', serif; color: #000; font-size: 12pt; line-height: 1.9; margin: 0; }
+  h1 { font-family: '黑体', 'SimHei', sans-serif; font-size: 16pt; text-align: center; margin: 0 0 6pt; }
+  .date { text-align: center; color: #444; font-size: 10.5pt; margin-bottom: 16pt; }
+  p { text-indent: 2em; margin: 6pt 0; text-align: justify; }
+  .pv-label { text-indent: 0; text-align: center; font-weight: bold; margin-top: 14pt; }
+  figure { text-align: center; margin: 10pt 0; page-break-inside: avoid; }
+  figure img { max-width: 100%; max-height: 110mm; object-fit: contain; }
+  figcaption { font-size: 9.5pt; color: #444; margin-top: 3pt; }
+  .sign-page { page: signpage; page-break-before: always; width: 210mm; height: 296mm; display: flex; align-items: center; justify-content: center; }
+  .sign-page img { width: 100%; height: 100%; object-fit: contain; }
+</style></head><body>
+  <h1>${escapeHtml(topic)} — 教学过程设计</h1>
+  <div class="date">${dateStr}</div>
+  ${body}
+  ${signPage}
+</body></html>`;
+    }
+
+    function printViaIframe(html) {
+      const old = document.getElementById('printFrame');
+      if (old) old.remove();
+      const iframe = document.createElement('iframe');
+      iframe.id = 'printFrame';
+      iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+      document.body.appendChild(iframe);
+      iframe.onload = () => {
+        const win = iframe.contentWindow;
+        if (!win) return;
+        const imgs = Array.from(win.document.images || []);
+        const waitAll = imgs.map(img => img.complete
+          ? Promise.resolve()
+          : new Promise(r => { img.onload = r; img.onerror = r; }));
+        Promise.all(waitAll).then(() => {
+          setTimeout(() => { win.focus(); win.print(); }, 200);
+        });
+      };
+      iframe.srcdoc = html;
+    }
+
+    async function printMaterials() {
+      const topic = topicInput.value.trim() || '未命名课题';
+      const processText = teachingProcessInput.value.trim();
+      if (!processText) {
+        showValidation('请先填写或用 AI 生成教学过程描述，再打印', 'error');
+        return;
+      }
+      if (photos.length === 0 && !signPhoto) {
+        showValidation('请先上传场景照片或签到表', 'error');
+        return;
+      }
+
+      const printBtn = document.getElementById('printBtn');
+      printBtn.disabled = true;
+      const original = printBtn.innerHTML;
+      printBtn.innerHTML = '<span class="spinner"></span> 准备打印...';
+
+      try {
+        if (!signPhoto && !confirm('尚未上传签到表，将只打印教学过程。继续打印吗？')) {
+          return;
+        }
+        const photoData = [];
+        for (const ph of photos) {
+          photoData.push({ url: await fileToDataUrl(ph.file), caption: ph.caption || '' });
+        }
+        const signUrl = signPhoto ? await fileToDataUrl(signPhoto.file) : null;
+        printViaIframe(buildPrintHtml(topic, processText, photoData, signUrl));
+        showValidation('已生成打印版，请在弹出的打印窗口中确认预览', 'success');
+      } catch (e) {
+        showValidation('打印准备失败：' + e.message, 'error');
+      } finally {
+        printBtn.disabled = false;
+        printBtn.innerHTML = original;
+      }
     }
 
     function showValidation(message, type) {
@@ -646,15 +911,19 @@
         const response = await fetch('/api/llm/generate-process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ topic, summary }),
+          body: JSON.stringify({ topic, summary, photoCaptions: photos.map(p => p.caption || '') }),
         });
 
         const data = await response.json();
         if (data.error) {
           showValidation(data.error, 'error');
         } else {
-          teachingProcessInput.value = data.process;
-          showValidation('教学过程已生成，您可以编辑修改', 'success');
+          // 归一化照片标记（统一为 [图N]、越界移除），并刷新图文预览
+          teachingProcessInput.value = normalizePhotoMarkers(data.process, photos.length);
+          renderProcessPreview();
+          showValidation(photos.length > 0
+            ? '教学过程已生成，场景照片已按 [图N] 标记插入对应位置，可编辑调整'
+            : '教学过程已生成（提示：先上传场景照片再生成，可自动在文中插图）', 'success');
         }
       } catch (error) {
         showValidation('AI 生成失败，请检查网络连接', 'error');
@@ -677,11 +946,41 @@
         .trim();
     }
 
-    async function createDocxBlob(text, title) {
-      const { Document, Packer, Paragraph, TextRun, AlignmentType } = docx;
+    function dataUrlToUint8(dataUrl) {
+      const b64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return arr;
+    }
 
+    function getImageNaturalSize(dataUrl) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = () => resolve(null);
+        img.src = dataUrl;
+      });
+    }
+
+    function fitImageSize(width, height, maxWidth = 440, maxHeight = 400) {
+      if (!width || !height) return { width: maxWidth, height: Math.round(maxWidth * 0.75) };
+      const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+      return { width: Math.round(width * scale), height: Math.round(height * scale) };
+    }
+
+    // text: 正文；title: 文档标题；opts.photos: [{url(dataUrl), caption}] 提供时解析 [图N] 标记嵌入图片
+    async function createDocxBlob(text, title, opts = {}) {
+      const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = docx;
+
+      const docPhotos = opts.photos || [];
       const cleanedText = cleanMarkdown(text);
-      const paragraphs = cleanedText.split(/\n\s*\n/).filter(p => p.trim());
+      const normalized = normalizePhotoMarkers(cleanedText, docPhotos.length);
+      const baseBlocks = parseProcessBlocks(normalized);
+      const blocks = baseBlocks.concat(appendUnreferencedPhotos(baseBlocks, docPhotos.length));
+
+      // 预先解析每张照片原始尺寸，保证嵌入时宽高比不变形
+      const naturalSizes = await Promise.all(docPhotos.map(p => getImageNaturalSize(p.url)));
 
       const children = [];
 
@@ -715,22 +1014,56 @@
         })
       );
 
-      for (const para of paragraphs) {
-        const trimmed = para.trim();
-        if (!trimmed) continue;
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: trimmed,
-                size: 28,
-                font: '宋体',
-              }),
-            ],
-            spacing: { after: 0, line: 360 },
-            indent: { firstLine: 480 },
-          })
-        );
+      for (const block of blocks) {
+        if (block.type === 'text') {
+          children.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: block.text,
+                  size: 28,
+                  font: '宋体',
+                }),
+              ],
+              spacing: { after: 0, line: 360 },
+              indent: { firstLine: 480 },
+            })
+          );
+        } else {
+          const ph = docPhotos[block.n - 1];
+          if (!ph) continue;
+          const nat = naturalSizes[block.n - 1];
+          const size = fitImageSize(nat && nat.width, nat && nat.height);
+          children.push(
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  type: String(ph.url).startsWith('data:image/png') ? 'png' : 'jpg',
+                  data: dataUrlToUint8(ph.url),
+                  transformation: size,
+                }),
+              ],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 120, after: ph.caption ? 40 : 120 },
+            })
+          );
+          if (ph.caption) {
+            children.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `图${block.n}：${ph.caption}`,
+                    size: 21,
+                    font: '宋体',
+                    color: '595959',
+                  }),
+                ],
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 120 },
+              })
+            );
+          }
+        }
       }
 
       const doc = new Document({
@@ -745,6 +1078,103 @@
       });
 
       return await Packer.toBlob(doc);
+    }
+
+    // 整页容纳图片的等比缩放（允许放大，用于签到表铺满 A4）。
+    // 尺寸略小于页面（A4≈794x1123px@96dpi），防止舍入导致图片被挤到第二页
+    function fitPageImageSize(width, height, maxWidth = 780, maxHeight = 1100) {
+      if (!width || !height) return { width: maxWidth, height: maxHeight };
+      const scale = Math.min(maxWidth / width, maxHeight / height);
+      return { width: Math.round(width * scale), height: Math.round(height * scale) };
+    }
+
+    // "本节材料"docx：与"一键打印本节材料"内容一致——图文教学过程 + 签到表独占整页 A4（零边距）
+    async function buildMaterialDocxBlob(topic, processText, docPhotos, signDataUrl) {
+      const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = docx;
+
+      const cleanedText = cleanMarkdown(processText);
+      const normalized = normalizePhotoMarkers(cleanedText, docPhotos.length);
+      const baseBlocks = parseProcessBlocks(normalized);
+      const blocks = baseBlocks.concat(appendUnreferencedPhotos(baseBlocks, docPhotos.length));
+
+      const naturalSizes = await Promise.all(docPhotos.map(p => getImageNaturalSize(p.url)));
+      const dateStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      const children = [];
+      children.push(new Paragraph({
+        children: [new TextRun({ text: topic + ' — 教学过程设计', bold: true, size: 32, font: '黑体' })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+      }));
+      children.push(new Paragraph({
+        children: [new TextRun({ text: dateStr, size: 24, font: '宋体', color: '888888' })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 },
+      }));
+
+      let extraStarted = false;
+      for (const block of blocks) {
+        if (block.type === 'text') {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: block.text, size: 28, font: '宋体' })],
+            spacing: { after: 0, line: 360 },
+            indent: { firstLine: 480 },
+          }));
+        } else {
+          const ph = docPhotos[block.n - 1];
+          if (!ph) continue;
+          if (block.appended && !extraStarted) {
+            children.push(new Paragraph({
+              children: [new TextRun({ text: '其余课堂照片', bold: true, size: 24, font: '黑体' })],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 200, after: 100 },
+            }));
+            extraStarted = true;
+          }
+          const nat = naturalSizes[block.n - 1];
+          const size = fitImageSize(nat && nat.width, nat && nat.height);
+          children.push(new Paragraph({
+            children: [new ImageRun({
+              type: String(ph.url).startsWith('data:image/png') ? 'png' : 'jpg',
+              data: dataUrlToUint8(ph.url),
+              transformation: size,
+            })],
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 120, after: ph.caption ? 40 : 120 },
+          }));
+          if (ph.caption) {
+            children.push(new Paragraph({
+              children: [new TextRun({ text: `图${block.n}：${ph.caption}`, size: 21, font: '宋体', color: '595959' })],
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 120 },
+            }));
+          }
+        }
+      }
+
+      const sections = [{
+        properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } },
+        children,
+      }];
+
+      // 第二节：签到表独占一整页 A4（零边距，等比铺满）
+      if (signDataUrl) {
+        const nat = await getImageNaturalSize(signDataUrl);
+        const size = fitPageImageSize(nat && nat.width, nat && nat.height);
+        sections.push({
+          properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 0, right: 0, bottom: 0, left: 0 } } },
+          children: [new Paragraph({
+            children: [new ImageRun({
+              type: String(signDataUrl).startsWith('data:image/png') ? 'png' : 'jpg',
+              data: dataUrlToUint8(signDataUrl),
+              transformation: size,
+            })],
+            alignment: AlignmentType.CENTER,
+          })],
+        });
+      }
+
+      return await Packer.toBlob(new Document({ sections }));
     }
 
     async function exportZip() {
@@ -770,8 +1200,18 @@
         const docxBlob = await createDocxBlob(summary, topic);
         folder.file('学习成果总结.docx', docxBlob);
 
-        const processDocxBlob = await createDocxBlob(teachingProcess, topic + ' - 教学过程设计');
+        // 教学过程 docx：传入照片以解析 [图N] 标记，嵌入真实照片（图文并茂）
+        const docPhotos = [];
+        for (const photo of photos) {
+          docPhotos.push({ url: await fileToDataUrl(photo.file), caption: photo.caption || '' });
+        }
+        const processDocxBlob = await createDocxBlob(teachingProcess, topic + ' - 教学过程设计', { photos: docPhotos });
         folder.file('教学过程设计.docx', processDocxBlob);
+
+        // “教学过程”文件夹：本节材料.docx（与“一键打印本节材料”内容一致的 Word 版：图文教学过程 + 签到表整页）
+        const signDataUrl = signPhoto ? await fileToDataUrl(signPhoto.file) : null;
+        const materialDocxBlob = await buildMaterialDocxBlob(topic, teachingProcess, docPhotos, signDataUrl);
+        folder.folder('教学过程').file('本节材料.docx', materialDocxBlob);
 
         const photoFolder = folder.folder('场景照片');
         for (let i = 0; i < photos.length; i++) {

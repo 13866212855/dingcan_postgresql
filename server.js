@@ -3,15 +3,26 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const OpenAI = require('openai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'shetuandabao-secret-key-2024';
+const SERVER_STARTED_AT = new Date().toISOString();
+// 前后端同源版本号：改代码时同步更新，/api/health、/api/system/info、页面页脚均可核对
+const SERVER_VERSION = '2026-10-29a';
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// HTML 页面禁止缓存：防止浏览器拿着旧版前端（旧逻辑/旧弹窗）访问新服务端
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.set('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) {
@@ -38,8 +49,22 @@ function loadConfig() {
   return { ...defaultConfig };
 }
 
+// 原子写 JSON：先写临时文件再 rename，避免写一半被读到或进程中断留下残缺文件
+function atomicWriteJson(filePath, data) {
+  const content = JSON.stringify(data, null, 2);
+  const tmpPath = filePath + '.tmp';
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    // 个别挂载方式（网络盘/特殊卷）不支持覆盖式 rename：回退为直接写
+    fs.writeFileSync(filePath, content, 'utf8');
+    try { fs.unlinkSync(tmpPath); } catch {}
+  }
+}
+
 function saveConfig(config) {
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+  atomicWriteJson(configPath, config);
 }
 
 if (!fs.existsSync(configPath)) {
@@ -71,7 +96,7 @@ function loadUsers() {
 }
 
 function saveUsers(users) {
-  fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
+  atomicWriteJson(usersPath, users);
 }
 
 function loadHistory() {
@@ -83,7 +108,98 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-  fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), 'utf8');
+  atomicWriteJson(historyPath, history);
+}
+
+// ====== 教学过程"图文并茂"标记处理 ======
+// 文本中的照片占位标记统一为 [图N]（N=1..照片数），docx 导出/前端预览/打印均按此解析
+const PHOTO_MARKER_RE = /\[图(\d+)\]/g;
+const PHOTO_MARKER_VARIANT_RE = /[【\[]\s*(?:图|图片|照片)\s*(\d+)\s*[】\]]/g;
+
+function normalizePhotoMarkers(text, photoCount) {
+  if (!text) return '';
+  let out = text.replace(PHOTO_MARKER_VARIANT_RE, (m, n) => `[图${n}]`);
+  // 越界标记（超出照片数量）直接移除
+  out = out.replace(PHOTO_MARKER_RE, (m, n) => (Number(n) >= 1 && Number(n) <= photoCount) ? m : '');
+  return out;
+}
+
+// 把教学过程文本解析为顺序块：{type:'text',text} 与 {type:'image',n}
+function parseProcessBlocks(text) {
+  const blocks = [];
+  const paragraphs = String(text || '').split(/\n\s*\n/);
+  for (const para of paragraphs) {
+    const parts = para.split(PHOTO_MARKER_RE);
+    // split 带捕获组时，奇数下标是标记的数字
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) {
+        const t = parts[i].replace(/\s*\n\s*/g, ' ').trim();
+        if (t) blocks.push({ type: 'text', text: t });
+      } else {
+        blocks.push({ type: 'image', n: Number(parts[i]) });
+      }
+    }
+  }
+  return blocks;
+}
+
+// 补上文本中没引用到的照片，保证所有上传照片都出现在排版里
+function appendUnreferencedPhotos(blocks, photoCount) {
+  const used = new Set(blocks.filter(b => b.type === 'image').map(b => b.n));
+  const extra = [];
+  for (let n = 1; n <= photoCount; n++) {
+    if (!used.has(n)) extra.push({ type: 'image', n });
+  }
+  return extra;
+}
+
+// 从 PNG/JPEG 二进制头解析原始尺寸（docx 嵌入需要保持宽高比）
+function getImageSize(buf, mime) {
+  try {
+    if (mime === 'image/png' && buf.length > 24) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (mime === 'image/jpeg') {
+      let off = 2;
+      while (off + 9 < buf.length) {
+        if (buf[off] !== 0xff) { off++; continue; }
+        const m = buf[off + 1];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+          return { height: buf.readUInt16BE(off + 5), width: buf.readUInt16BE(off + 7) };
+        }
+        off += 2 + buf.readUInt16BE(off + 2);
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// docx 内图片显示尺寸：等比缩放到不超 maxWidth/maxHeight（单位为 docx 像素 ≈ 96dpi）
+function fitImageSize(width, height, maxWidth = 440, maxHeight = 400) {
+  if (!width || !height) return { width: maxWidth, height: Math.round(maxWidth * 0.75) };
+  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
+// 整页容纳图片的等比缩放（允许放大，用于签到表铺满 A4）。
+// A4≈794x1123px@96dpi，取略小值防止舍入把图片挤到第二页
+function fitPageImageSize(width, height, maxWidth = 780, maxHeight = 1100) {
+  if (!width || !height) return { width: maxWidth, height: maxHeight };
+  const scale = Math.min(maxWidth / width, maxHeight / height);
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
+// ====== 数据写互斥：串行化所有「读-改-写」操作 ======
+// POST /api/export 的 读history → 生成docx/zip(有await) → 写history 之间，
+// 事件循环会放行其他请求；若两个请求同时处于该窗口，后写者会用旧快照覆盖
+// 先写者的数据（表现为"导入/提交显示成功，刷新后记录消失"）。
+// 所有会修改 history/users 的端点都必须通过 runExclusive 执行。
+let dataQueue = Promise.resolve();
+function runExclusive(fn) {
+  const run = dataQueue.then(fn, fn);
+  // 队列自身不携带错误状态，错误由各请求自己的 try/catch 处理
+  dataQueue = run.then(() => {}, () => {});
+  return run;
 }
 
 function authenticateToken(req, res, next) {
@@ -122,23 +238,34 @@ app.post('/api/register', async (req, res) => {
     return res.status(400).json({ error: '密码至少6个字符' });
   }
 
-  const users = loadUsers();
-  if (users.find(u => u.username === username)) {
-    return res.status(409).json({ error: '用户名已存在' });
+  try {
+    const result = await runExclusive(async () => {
+      const users = loadUsers();
+      if (users.find(u => u.username === username)) {
+        return { conflict: true };
+      }
+      const passwordHash = await bcrypt.hash(password, 10);
+      const newUser = {
+        id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        username,
+        passwordHash,
+        createdAt: new Date().toISOString(),
+      };
+      users.push(newUser);
+      saveUsers(users);
+      return { newUser };
+    });
+
+    if (result.conflict) {
+      return res.status(409).json({ error: '用户名已存在' });
+    }
+
+    const token = jwt.sign({ userId: result.newUser.id, username: result.newUser.username }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ token, userId: result.newUser.id, username: result.newUser.username });
+  } catch (error) {
+    console.error('Register error:', error.message);
+    res.status(500).json({ error: '注册失败: ' + error.message });
   }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const newUser = {
-    id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    username,
-    passwordHash,
-    createdAt: new Date().toISOString(),
-  };
-  users.push(newUser);
-  saveUsers(users);
-
-  const token = jwt.sign({ userId: newUser.id, username: newUser.username }, JWT_SECRET, { expiresIn: '7d' });
-  res.status(201).json({ token, userId: newUser.id, username: newUser.username });
 });
 
 app.post('/api/user/login', async (req, res) => {
@@ -164,14 +291,18 @@ app.post('/api/user/login', async (req, res) => {
 
 app.post('/api/export', authenticateUser, async (req, res) => {
   try {
-    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto, createdAt: clientCreatedAt } = req.body;
+    const { recordId: existingRecordId, topic, summary, teachingProcess, photos, signPhoto, createdAt: clientCreatedAt, importMode } = req.body;
     if (!topic || !summary) {
       return res.status(400).json({ error: '请提供课题名称和总结' });
     }
-    if (!teachingProcess) {
+    // 正常提交流程必须带教学过程；合集包导入(importMode)放行——老版本系统的记录可能没有该字段
+    if (!teachingProcess && !importMode) {
       return res.status(400).json({ error: '请提供教学过程描述' });
     }
 
+    // 整段「读history → 生成docx/zip → 写history」必须持有数据锁串行执行，
+    // 防止并发请求（多人同时提交/导入）用旧快照互相覆盖记录
+    const locked = await runExclusive(async () => {
     const history = loadHistory();
     let record = null;
     let isEdit = false;
@@ -207,7 +338,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     }
 
     const JSZip = require('jszip');
-    const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
+    const { Document, Packer, Paragraph, TextRun, AlignmentType, ImageRun } = require('docx');
     const zip = new JSZip();
     const folder = zip.folder(`${topic}_${date}`);
 
@@ -245,9 +376,19 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     const docxBuffer = await Packer.toBuffer(doc);
     folder.file('学习成果总结.docx', docxBuffer);
 
-    const cleanedProcess = teachingProcess.replace(/\*\*(.+?)\*\*/g, '$1').replace(/##+\s*/g, '').trim();
-    const processParagraphs = cleanedProcess.split(/\n\s*\n/).filter(p => p.trim());
+    // 导入的老记录若连内层 docx 都没有教学过程文本，落库时给占位说明，避免空 docx
+    const processText = (teachingProcess && String(teachingProcess).trim())
+      ? teachingProcess
+      : '（导入的原始记录未包含教学过程描述）';
 
+    const cleanedProcess = normalizePhotoMarkers(
+      processText.replace(/\*\*(.+?)\*\*/g, '$1').replace(/##+\s*/g, '').trim(),
+      (photos ? photos.length : 0)
+    );
+
+    // 构建教学过程图文段落的闭包：教学过程设计.docx 与 本节材料.docx 各需独立构建
+    // （docx 的 Paragraph/ImageRun 对象不可跨 Document 复用）
+    const makeProcessDocChildren = () => {
     const processDocChildren = [
       new Paragraph({
         children: [new TextRun({ text: topic + ' - 教学过程设计', bold: true, size: 32, font: '黑体' })],
@@ -264,20 +405,94 @@ app.post('/api/export', authenticateUser, async (req, res) => {
       }),
     ];
 
-    for (const para of processParagraphs) {
-      processDocChildren.push(new Paragraph({
-        children: [new TextRun({ text: para.trim(), size: 28, font: '宋体' })],
-        spacing: { after: 0, line: 360 },
-        indent: { firstLine: 480 },
-      }));
+    // 图文排版：文本块正常成段；[图N] 标记替换为居中图片 + 图注；未引用的照片补在文末
+    const docPhotos = [];
+    if (photos && photos.length) {
+      for (let i = 0; i < photos.length; i++) {
+        const p = photos[i];
+        const dataUrl = String(p.data || '');
+        const b64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        const isPng = /^iVBOR/.test(b64) || /\.png$/i.test(p.name || '');
+        docPhotos.push({
+          buffer: Buffer.from(b64, 'base64'),
+          mime: isPng ? 'image/png' : 'image/jpeg',
+          caption: p.caption || '',
+        });
+      }
     }
+    const processBlocksBase = parseProcessBlocks(cleanedProcess);
+    const processBlocks = processBlocksBase.concat(appendUnreferencedPhotos(processBlocksBase, docPhotos.length));
+
+    for (const block of processBlocks) {
+      if (block.type === 'text') {
+        processDocChildren.push(new Paragraph({
+          children: [new TextRun({ text: block.text, size: 28, font: '宋体' })],
+          spacing: { after: 0, line: 360 },
+          indent: { firstLine: 480 },
+        }));
+      } else {
+        const photo = docPhotos[block.n - 1];
+        if (!photo) continue;
+        const natural = getImageSize(photo.buffer, photo.mime);
+        const size = fitImageSize(natural?.width, natural?.height);
+        processDocChildren.push(new Paragraph({
+          children: [new ImageRun({
+            type: photo.mime === 'image/png' ? 'png' : 'jpg',
+            data: photo.buffer,
+            transformation: size,
+          })],
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 120, after: photo.caption ? 40 : 120 },
+        }));
+        if (photo.caption) {
+          processDocChildren.push(new Paragraph({
+            children: [new TextRun({
+              text: `图${block.n}：${photo.caption}`,
+              size: 21, font: '宋体', color: '595959',
+            })],
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 120 },
+          }));
+        }
+      }
+    }
+    return processDocChildren;
+    };
 
     const processDoc = new Document({
-      sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } }, children: processDocChildren }],
+      sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } }, children: makeProcessDocChildren() }],
     });
 
     const processDocxBuffer = await Packer.toBuffer(processDoc);
     folder.file('教学过程设计.docx', processDocxBuffer);
+
+    // ====== “教学过程/本节材料.docx”：与“一键打印本节材料”内容一致（图文教学过程 + 签到表独占整页 A4） ======
+    const materialSections = [{
+      properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 } } },
+      children: makeProcessDocChildren(),
+    }];
+    if (signPhoto) {
+      const signRaw = String(signPhoto.data || '');
+      const signB64 = signRaw.includes(',') ? signRaw.split(',')[1] : signRaw;
+      const signBuf = Buffer.from(signB64, 'base64');
+      const signIsPng = /^iVBOR/.test(signB64) || /\.png$/i.test(signPhoto.name || '');
+      const signNat = getImageSize(signBuf, signIsPng ? 'image/png' : 'image/jpeg');
+      const signSize = fitPageImageSize(signNat && signNat.width, signNat && signNat.height);
+      materialSections.push({
+        // A4 = 11906 x 16838 twips，零边距让签到表铺满整页
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 0, right: 0, bottom: 0, left: 0 } } },
+        children: [new Paragraph({
+          children: [new ImageRun({
+            type: signIsPng ? 'png' : 'jpg',
+            data: signBuf,
+            transformation: signSize,
+          })],
+          alignment: AlignmentType.CENTER,
+        })],
+      });
+    }
+    const materialDoc = new Document({ sections: materialSections });
+    folder.folder('教学过程').file('本节材料.docx', await Packer.toBuffer(materialDoc));
 
     if (photos && photos.length > 0) {
       const photoFolder = folder.folder('场景照片');
@@ -306,7 +521,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     if (isEdit) {
       record.topic = topic;
       record.summary = summary;
-      record.teachingProcess = teachingProcess;
+      record.teachingProcess = processText;
       record.photoCount = photos ? photos.length : 0;
       record.hasSignPhoto = !!signPhoto;
       record.zipFileName = zipFileName;
@@ -317,7 +532,7 @@ app.post('/api/export', authenticateUser, async (req, res) => {
         userId: req.user.userId,
         topic,
         summary,
-        teachingProcess,
+        teachingProcess: processText,
         photoCount: photos ? photos.length : 0,
         hasSignPhoto: !!signPhoto,
         createdAt: baseDate.toISOString(),
@@ -327,7 +542,17 @@ app.post('/api/export', authenticateUser, async (req, res) => {
     }
     saveHistory(history);
 
-    res.json({ message: isEdit ? '更新成功' : '导出成功', recordId, downloadUrl: `/api/export/${recordId}/download` });
+    // 返回实际落库的记录，前端导入后可据此核对持久化结果
+    const savedRecord = isEdit ? record : history[history.length - 1];
+    return { isEdit, recordId, savedRecord };
+    }); // end runExclusive
+
+    res.json({
+      message: locked.isEdit ? '更新成功' : '导出成功',
+      recordId: locked.recordId,
+      record: locked.savedRecord,
+      downloadUrl: `/api/export/${locked.recordId}/download`,
+    });
   } catch (error) {
     console.error('Export error:', error.message);
     res.status(500).json({ error: '导出失败: ' + error.message });
@@ -364,7 +589,7 @@ app.get('/api/export/download-all', authenticateUser, async (req, res) => {
         recordId: record.id,
         topic: record.topic,
         summary: record.summary,
-        teachingProcess: record.teachingProcess,
+        teachingProcess: record.teachingProcess || '', // 老版本记录可能没有该字段
         photoCount: record.photoCount,
         hasSignPhoto: record.hasSignPhoto,
         createdAt: record.createdAt,
@@ -416,17 +641,41 @@ app.get('/api/history', authenticateUser, (req, res) => {
 });
 
 app.delete('/api/history/:recordId', authenticateUser, (req, res) => {
+  runExclusive(() => {
+    const history = loadHistory();
+    const index = history.findIndex(h => h.id === req.params.recordId && h.userId === req.user.userId);
+    if (index === -1) {
+      res.status(404).json({ error: '记录不存在' });
+      return;
+    }
+
+    const record = history[index];
+    const zipPath = path.join(exportsDir, req.user.userId, record.zipFileName);
+    if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+
+    history.splice(index, 1);
+    saveHistory(history);
+    res.json({ message: '已删除' });
+  }).catch(error => {
+    console.error('Delete history error:', error.message);
+    res.status(500).json({ error: '删除失败: ' + error.message });
+  });
+});
+
+// 实例信息：用于诊断「导入时显示成功、刷新后消失」类问题。
+// 若导入前后 hostname/pid/启动时间发生变化，说明浏览器连到了不同的服务实例
+// （例如 3000 端口本地实例与 7794 端口 Docker 实例混用，两者数据目录不同）。
+app.get('/api/system/info', authenticateUser, (req, res) => {
   const history = loadHistory();
-  const index = history.findIndex(h => h.id === req.params.recordId && h.userId === req.user.userId);
-  if (index === -1) return res.status(404).json({ error: '记录不存在' });
-
-  const record = history[index];
-  const zipPath = path.join(exportsDir, req.user.userId, record.zipFileName);
-  if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-
-  history.splice(index, 1);
-  saveHistory(history);
-  res.json({ message: '已删除' });
+  res.json({
+    version: SERVER_VERSION,
+    hostname: os.hostname(),
+    pid: process.pid,
+    serverStartedAt: SERVER_STARTED_AT,
+    uptimeSec: Math.floor(process.uptime()),
+    dataDir,
+    historyTotalCount: history.length,
+  });
 });
 
 app.post('/api/login', (req, res) => {
@@ -516,7 +765,7 @@ app.post('/api/llm/summarize', authenticateToken, async (req, res) => {
 
 app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
   try {
-    const { topic, summary } = req.body;
+    const { topic, summary, photoCaptions } = req.body;
     if (!topic) return res.status(400).json({ error: '请提供课题内容' });
     if (!summary) return res.status(400).json({ error: '请提供学习成果总结' });
 
@@ -529,6 +778,21 @@ app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
       apiKey: config.api_key,
       baseURL: config.base_url,
     });
+
+    // 照片清单（可带说明）；提供了才启用图文标记模式
+    const captions = Array.isArray(photoCaptions)
+      ? photoCaptions.map(c => String(c || '').trim())
+      : null;
+    const hasPhotos = captions && captions.length > 0;
+
+    const markerRules = hasPhotos ? `
+8. 本次课堂实拍照片共 ${captions.length} 张（清单见下）。必须在教学过程中与内容最匹配的环节插入对应照片标记，格式为 [图1]、[图2]……以此类推
+9. 每张照片的标记在教学过程中恰好出现一次，标记必须单独占一行，前后各留一个空行
+10. 标记在最终排版时会被替换为真实照片，因此除自然表述（如"如图"）外不要围绕标记添加多余说明文字` : '';
+
+    const photoList = hasPhotos ? `
+课堂实拍照片清单（共 ${captions.length} 张）：
+${captions.map((c, i) => `图${i + 1}：${c || '（未填写说明）'}`).join('\n')}` : '';
 
     const response = await openai.chat.completions.create({
       model: config.model_name,
@@ -544,7 +808,7 @@ app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
 4. 结合农村高中学生的实际情况，不要写得太高端
 5. 用纯文本段落形式输出，不要分标题
 6. 教学过程应包含以下环节：课堂导入、新课讲授、学生实践操作、总结评价
-7. 必须参考学习成果总结中的具体信息来设计教学过程，不能仅从课题标题凭空生成
+7. 必须参考学习成果总结中的具体信息来设计教学过程，不能仅从课题标题凭空生成${markerRules}
 
 输出格式示例：
 本节课首先通过XXX案例/问题导入，激发学生学习兴趣。在新课讲授环节，教师通过XXX方式讲解XXX知识点，学生能较好地理解XXX。实践操作环节，学生分组完成了XXX任务，教师巡视指导了XXX方面的问题。最后通过XXX方式进行总结评价，大部分学生达到了学习目标。`,
@@ -554,7 +818,7 @@ app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
           content: `本次社团活动的课题是：${topic}。
 
 学生的学习成果总结：${summary}
-
+${photoList}
 请根据以上内容生成教学过程描述。`,
         },
       ],
@@ -562,7 +826,24 @@ app.post('/api/llm/generate-process', authenticateToken, async (req, res) => {
       max_tokens: config.max_tokens,
     });
 
-    const process = response.choices[0]?.message?.content || '';
+    let process = response.choices[0]?.message?.content || '';
+
+    // 归一化 AI 输出的照片标记：统一为 [图N]，越界的移除，遗漏的补到文末
+    if (hasPhotos) {
+      process = normalizePhotoMarkers(process, captions.length);
+      const existing = new Set();
+      PHOTO_MARKER_RE.lastIndex = 0;
+      let m;
+      while ((m = PHOTO_MARKER_RE.exec(process)) !== null) existing.add(Number(m[1]));
+      const missing = [];
+      for (let n = 1; n <= captions.length; n++) {
+        if (!existing.has(n)) missing.push(`[图${n}]`);
+      }
+      if (missing.length) {
+        process = process.trimEnd() + '\n\n课堂照片：\n\n' + missing.join('\n\n');
+      }
+    }
+
     res.json({ process });
   } catch (error) {
     console.error('LLM API Error:', error.message);
@@ -575,7 +856,7 @@ app.get('/admin', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', version: SERVER_VERSION, startedAt: SERVER_STARTED_AT });
 });
 
 app.listen(PORT, () => {
