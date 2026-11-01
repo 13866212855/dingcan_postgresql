@@ -32,8 +32,10 @@ import {
   Building2,
   ChevronDown,
   Brain,
+  CloudDownload,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
+import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
 import TableManagement from '@/components/admin/TableManagement';
 import MemberManagement from '@/components/admin/MemberManagement';
 import SettingsManagement from '@/components/admin/SettingsManagement';
@@ -132,6 +134,9 @@ export default function AdminPage() {
   const [dishSearchQuery, setDishSearchQuery] = useState('');
   const [isDishModalOpen, setIsDishModalOpen] = useState(false);
   const [dishToEdit, setDishToEdit] = useState<Dish | null>(null);
+  const [isImportingDishes, setIsImportingDishes] = useState(false);
+  const [isSmartBatchOpen, setIsSmartBatchOpen] = useState(false);
+  const [isClearingDishes, setIsClearingDishes] = useState(false);
 
   // Auto-unlock audio on any mobile/desktop user interaction
   useEffect(() => {
@@ -516,6 +521,82 @@ export default function AdminPage() {
       }
     } catch (e: any) {
       alert('操作失败: ' + (e?.message || ''));
+    }
+  };
+
+  // 一键拉取主租户(总店)菜品库到当前分店（仅子分店后台可用；同名菜品自动跳过，可重复执行）
+  const handleImportFromMaster = async () => {
+    if (isMasterAdmin || isImportingDishes) return;
+    setIsImportingDishes(true);
+    try {
+      // 1. 先拉取预览统计，让管理员在确认前清楚将导入多少
+      const prevRes = await fetch(
+        `/api/dishes/import-from-master?tenant=${encodeURIComponent(currentTenantId)}`,
+        { headers: { Accept: 'application/json' }, cache: 'no-store' }
+      );
+      const prevData = await prevRes.json();
+      if (!prevData.success) {
+        alert(prevData.error || '获取拉取预览失败');
+        return;
+      }
+      const p = prevData.data;
+
+      if (p.toImport === 0) {
+        alert(
+          `总店(主租户)菜品库共 ${p.masterTotal} 道菜品，均已存在于您的菜品库中（同名自动跳过），本次没有需要新导入的菜品。`
+        );
+        return;
+      }
+
+      const tip = `一键拉取总店(主租户)菜品库\n\n总店共有 ${p.masterTotal} 道菜品\n您当前菜品库已有 ${p.tenantTotal} 道\n其中 ${p.skipped} 道与总店同名将自动跳过\n本次将新导入 ${p.toImport} 道菜品\n\n导入后可在本店随意改价、上下架与删除，互不影响总店数据。\n确定现在拉取吗？`;
+      if (!confirm(tip)) return;
+
+      // 2. 执行导入
+      const res = await fetch(
+        `/api/dishes/import-from-master?tenant=${encodeURIComponent(currentTenantId)}`,
+        { method: 'POST' }
+      );
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message || '拉取完成');
+        fetchDishes();
+      } else {
+        alert(data.error || '拉取失败');
+      }
+    } catch (e: any) {
+      alert('拉取请求失败: ' + (e?.message || ''));
+    } finally {
+      setIsImportingDishes(false);
+    }
+  };
+
+  // 一键清空当前门店菜品库（危险操作：双重确认；历史订单快照不受影响）
+  const handleClearAllDishes = async () => {
+    if (isClearingDishes) return;
+    const count = dishes.length;
+    if (count === 0) {
+      alert('当前菜品库已经是空的，无需清空。');
+      return;
+    }
+    if (!confirm(`确定要一键清空【${storeInfo.name}】菜品库中的全部 ${count} 道菜品吗？\n\n此操作不可恢复（历史订单中的菜品快照不受影响）。\n如需保留备份，可先到总店后台「连锁分店」确认总店菜品库完整。`)) return;
+    if (!confirm(`再次确认：真的要删除全部 ${count} 道菜品吗？\n删除后前台点餐页面将立即无菜可点。`)) return;
+
+    setIsClearingDishes(true);
+    try {
+      const res = await fetch(`/api/dishes?tenant=${encodeURIComponent(currentTenantId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message || '菜品库已清空');
+        fetchDishes();
+      } else {
+        alert(data.error || '清空失败');
+      }
+    } catch (e: any) {
+      alert('清空请求失败: ' + (e?.message || ''));
+    } finally {
+      setIsClearingDishes(false);
     }
   };
 
@@ -1348,8 +1429,8 @@ export default function AdminPage() {
               </div>
 
               {/* Right Tools: Search & Add */}
-              <div className="flex items-center space-x-2.5 w-full sm:w-auto">
-                <div className="relative flex-1 sm:w-56">
+              <div className="flex flex-wrap items-center space-x-2.5 w-full sm:w-auto">
+                <div className="relative flex-1 min-w-[140px] sm:w-56 sm:min-w-0">
                   <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
@@ -1359,6 +1440,31 @@ export default function AdminPage() {
                     className="w-full pl-8 pr-3 py-1.5 text-xs bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
+
+                {/* 一键拉取总店菜品：仅子分店后台显示，从主租户(default)菜品库一键复制全部菜品 */}
+                {!isMasterAdmin && (
+                  <button
+                    id="btn-import-master-dishes"
+                    onClick={handleImportFromMaster}
+                    disabled={isImportingDishes}
+                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center space-x-1.5 transition-transform active:scale-95 shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                    title="将总店(主租户)菜品库的全部菜品一键复制到本分店，同名菜品自动跳过，可重复执行"
+                  >
+                    <CloudDownload className={`w-4 h-4 ${isImportingDishes ? 'animate-pulse' : ''}`} />
+                    <span>{isImportingDishes ? '正在拉取...' : '一键拉取总店菜品'}</span>
+                  </button>
+                )}
+
+                {/* 智能批量添加：粘贴菜单文本，AI 解析菜名价格并生成配图后一键入库 */}
+                <button
+                  id="btn-smart-batch-dishes"
+                  onClick={() => setIsSmartBatchOpen(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center space-x-1.5 transition-transform active:scale-95 shrink-0"
+                  title="粘贴菜单文本（每行一道菜，如：烤鸭腿6元），AI 自动解析菜名价格、生成配图后批量入库"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>智能批量添加</span>
+                </button>
 
                 <button
                   id="btn-add-dish"
@@ -1371,6 +1477,18 @@ export default function AdminPage() {
                   <Plus className="w-4 h-4" />
                   <span>添加新菜品</span>
                 </button>
+
+                {/* 一键清空菜品库：危险操作，双重确认 */}
+                <button
+                  id="btn-clear-dishes"
+                  onClick={handleClearAllDishes}
+                  disabled={isClearingDishes}
+                  className="px-3.5 py-2 bg-white border border-rose-200 hover:border-rose-400 hover:bg-rose-50 text-rose-600 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="一键清空本店菜品库的全部菜品（不可恢复）"
+                >
+                  <Trash2 className={`w-4 h-4 ${isClearingDishes ? 'animate-spin' : ''}`} />
+                  <span>{isClearingDishes ? '清空中...' : '一键清空'}</span>
+                </button>
               </div>
             </div>
 
@@ -1382,7 +1500,9 @@ export default function AdminPage() {
               </div>
             ) : filteredDishes.length === 0 ? (
               <div className="py-16 text-center text-xs text-neutral-400 bg-white rounded-2xl border border-neutral-200">
-                暂无符合条件的菜品，点击上方按钮新增
+                {dishes.length === 0 && !isMasterAdmin
+                  ? '本店菜品库为空：可点击上方「一键拉取总店菜品」快速导入总店全套菜品，或手动新增'
+                  : '暂无符合条件的菜品，点击上方按钮新增'}
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-neutral-200/80 shadow-2xs overflow-hidden">
@@ -1558,6 +1678,15 @@ export default function AdminPage() {
         dishToEdit={dishToEdit}
         onSuccess={() => fetchDishes()}
         tenantId={currentTenantId}
+      />
+
+      {/* Smart Batch Dish Add Modal */}
+      <SmartDishBatchModal
+        isOpen={isSmartBatchOpen}
+        onClose={() => setIsSmartBatchOpen(false)}
+        onSuccess={() => fetchDishes()}
+        tenantId={currentTenantId}
+        existingDishes={dishes}
       />
 
       {/* Order Detail Modal */}

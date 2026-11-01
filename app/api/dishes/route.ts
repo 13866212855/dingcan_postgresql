@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllDishes, createDish } from '@/lib/db';
+import { getAllDishes, createDish, clearAllDishes } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
@@ -52,6 +52,35 @@ export async function POST(req: NextRequest) {
     console.error('Failed to create dish:', error);
     return NextResponse.json(
       { success: false, error: '创建菜品失败: ' + (error?.message || '') },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE 一键清空当前租户的全部菜品（危险操作：需管理员登录会话）
+ */
+export async function DELETE(req: NextRequest) {
+  try {
+    if (req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token') {
+      return NextResponse.json(
+        { success: false, error: '无管理员权限，请先登录后台' },
+        { status: 401 }
+      );
+    }
+
+    const tenantId = getTenantIdFromRequest(req);
+    const deleted = await clearAllDishes(tenantId);
+    return NextResponse.json({
+      success: true,
+      message: `已清空 ${deleted} 道菜品`,
+      deleted,
+      tenantId,
+    });
+  } catch (error: any) {
+    console.error('Failed to clear dishes:', error);
+    return NextResponse.json(
+      { success: false, error: '清空菜品失败: ' + (error?.message || '') },
       { status: 500 }
     );
   }

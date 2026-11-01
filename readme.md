@@ -30,7 +30,7 @@
   - 订单状态流转（待处理 -> 制作中 -> 已完成 / 已取消）；
   - 支付状态确认与结账核销；
   - 统计当日营业额、订单总数、待处理单量与实收金额。
-- **菜品库管理**：支持按门店录入菜品、修改价格、编辑配图与口感说明、一键上下架与删除。
+- **菜品库管理**：支持按门店录入菜品、修改价格、编辑配图与口感说明、一键上下架与删除；分店后台更支持「一键拉取总店菜品」，将主租户菜品库整套复制到本店（同名自动跳过、可重复执行、拉取后各自独立互不影响）；另支持「一键清空」本店全部菜品（双重确认、历史订单快照不受影响）与「智能批量添加」——粘贴菜单文本（每行一道菜，如：烤鸭腿6元），大模型自动解析菜名、单价、分类并撰写美食描述，还能按菜名 AI 生成菜品配图（自动压缩转存云端永久保存），确认后一键批量入库。
 - **餐桌与桌码管理**：维护各门店餐桌编号与容纳人数，自动生成携带当前门店租户与桌号的专属点餐二维码（支持导出与即时扫码预览）。
 - **会员与积分体系**：手机号快速认证，按门店记录会员消费、可用积分与历史累计。
 - **收款与品牌设置**：独立配置各门店名称、店标 Logo、宣传语、收款二维码（微信/支付宝）、起送费与满减优惠等。
@@ -152,6 +152,10 @@
 | **创建新门店** | `POST /api/tenants` | Body: `{ id, name, slogan, logo, phone, address, status }` | 新建租户，自动初始化基础数据 |
 | **获取分店菜单** | `GET /api/dishes` | `GET /api/dishes?tenant=chuan` | 获取 `chuan` 门店在售菜品与分类 |
 | **录入新菜品** | `POST /api/dishes` | Body: `{ tenant_id: "chuan", name, price, ... }` | 菜品绑定至指定租户 |
+| **一键拉取总店菜品** | `POST /api/dishes/import-from-master` | `POST /api/dishes/import-from-master?tenant=chuan`（需后台登录会话） | 将主租户(default)全部菜品按名称去重后复制到 `chuan` 分店，返回新增/跳过数量；`GET` 同路径可预览将导入的数量 |
+| **一键清空菜品库** | `DELETE /api/dishes` | `DELETE /api/dishes?tenant=chuan`（需后台登录会话） | 清空该门店全部菜品，返回删除数量；历史订单菜品快照不受影响 |
+| **智能解析菜单文本** | `POST /api/dishes/smart-parse` | Body: `{ action: "parse", text, tenantId }`（需后台登录会话） | 大模型把自由文本菜单解析为结构化菜品数组（菜名/价格/分类/描述），失败自动降级本地正则解析；`action: "generate_image"` + `dishName` 按菜名生成配图并转存 Cloudinary |
+| **批量创建菜品** | `POST /api/dishes/batch` | Body: `{ dishes: [{ name, price, category, description, image }], tenantId }`（需后台登录会话） | 事务批量入库，同名自动跳过，返回成功/跳过/无效数量 |
 | **查询分店桌位** | `GET /api/tables` | `GET /api/tables?tenant=yue` | 获取 `yue` 门店的所有桌台与占用状态 |
 | **顾客提交订单** | `POST /api/orders` | Body: `{ tenant_id: "chuan", table_num, items, ... }` | 提交订单至对应分店，触发该店叫单 |
 | **分店订单流转** | `PUT /api/orders` | Body: `{ tenant_id: "chuan", id, status: "completed" }` | 变更订单状态（制作中/已完成/已取消） |

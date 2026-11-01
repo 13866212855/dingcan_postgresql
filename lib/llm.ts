@@ -1,5 +1,7 @@
 import { getSettings } from '@/lib/db';
 import type { LLMConfig } from '@/types';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+import { optimizeImageBuffer } from '@/lib/imageProcessor';
 
 const cleanEnv = (val?: string) => val ? val.replace(/^["']|["']$/g, '').trim() : undefined;
 const cleanEnvNum = (val: string | undefined, fallback: number) => {
@@ -504,4 +506,308 @@ ${params.currentDescription ? `原描述：“${params.currentDescription}”，
     description: generatedText.replace(/^["'“]|["'”]$/g, '').trim(),
     modelUsed: modelToTry,
   };
+}
+
+// ----------------------------------------------------
+// 智能批量添加菜品：文本解析 + AI 配图生成
+// ----------------------------------------------------
+export interface ParsedDishItem {
+  name: string;
+  price: number;
+  category: string;
+  description: string;
+}
+
+/**
+ * 本地正则兜底解析（不依赖大模型）：
+ * 支持每行一条，如 "烤鸭腿6元"、"水饺13元（小份）"、"西蓝花3.5元"、"面条 13 元（口味自己注明）"
+ */
+export function parseDishTextLocally(rawText: string, existingCategories?: string[]): ParsedDishItem[] {
+  const cats = existingCategories && existingCategories.length > 0 ? existingCategories : ['特色热炒'];
+  const pickCategory = (text: string): string => {
+    const preferExisting = cats.find((c) => text.includes(c) || c.includes(text));
+    if (preferExisting) return preferExisting;
+    if (/[饭面粉饺包饼粥]|主食/.test(text)) {
+      return cats.find((c) => c.includes('主食') || c.includes('面') || c.includes('饭')) || '经典主食';
+    }
+    if (/[汤羹]/.test(text)) return cats.find((c) => c.includes('汤')) || '养生靓汤';
+    if (/[凉卤拌泡酱]/.test(text)) return cats.find((c) => c.includes('凉')) || '开胃凉菜';
+    if (/[饮料酒茶水奶汁]/.test(text)) return cats.find((c) => c.includes('饮') || c.includes('酒')) || '酒水饮料';
+    return cats.includes('特色热炒') ? '特色热炒' : cats[0];
+  };
+
+  const items: ParsedDishItem[] = [];
+  const lines = (rawText || '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim().replace(/^[·•\-\d+．.、\s]+/, '').trim();
+    if (!line) continue;
+
+    let name = '';
+    let price = 0;
+    let note = '';
+
+    // 形态1：名称+价格(元)，括注可跟在元后面
+    let m = line.match(/^(.{1,40}?)\s*(\d+(?:\.\d{1,2})?)\s*[元块¥]\s*(.*)$/);
+    if (!m) {
+      // 形态2：名称 分隔符 价格（无"元"字）
+      m = line.match(/^(.{1,40}?)[\s:：]+\s*(\d+(?:\.\d{1,2})?)\s*(.*)$/);
+    }
+    if (!m) {
+      // 形态3：价格前置，如 "6元 烤鸭腿"
+      const m3 = line.match(/^(\d+(?:\.\d{1,2})?)\s*[元块]\s*(.{1,40})$/);
+      if (m3) {
+        price = parseFloat(m3[1]);
+        name = m3[2].trim();
+      }
+    } else {
+      name = m[1].trim();
+      price = parseFloat(m[2]);
+      note = (m[3] || '').trim();
+    }
+
+    if (!name || !(price > 0)) continue;
+
+    // 括注处理：（小份）（大份）等并进菜名以区分同名不同价；（口味自己注明）等转为描述
+    const paren = note.match(/^[（(](.+?)[)）]\s*(.*)$/);
+    if (paren) {
+      const inner = paren[1].trim();
+      const tail = paren[2].trim();
+      if (/(口味|备注|注明|加辣|忌口)/.test(inner)) {
+        note = inner;
+      } else {
+        name = `${name}（${inner}）`;
+        note = tail;
+      }
+    } else if (note) {
+      name = `${name}${note.startsWith('（') || note.startsWith('(') ? '' : ''}`;
+    }
+
+    name = name.replace(/[,，。;；\s]+$/, '').trim();
+    if (!name) continue;
+
+    const description = note
+      ? `${note}。精选新鲜食材，现点现做，风味地道。`
+      : '精选新鲜食材，现点现做，风味地道。';
+
+    items.push({ name, price, category: pickCategory(name), description });
+  }
+  return items;
+}
+
+/**
+ * 大模型批量解析菜品文本：
+ * 输入一段自由文本（每行一道菜，如"烤鸭腿6元"），输出结构化菜品数组。
+ * 大模型失败或漏项时自动回退/合并本地正则解析结果，保证永不空手而归。
+ */
+export async function parseDishListTextWithAI(params: {
+  text: string;
+  tenantId?: string;
+  existingCategories?: string[];
+}): Promise<{ success: boolean; source: 'llm' | 'local' | 'merged'; data: ParsedDishItem[]; error?: string }> {
+  const config = await getLLMConfig(params.tenantId);
+  const localItems = parseDishTextLocally(params.text, params.existingCategories);
+
+  const categoryInstruction =
+    params.existingCategories && params.existingCategories.length > 0
+      ? `餐厅现有分类为：【${params.existingCategories.join('、')}】，category 必须优先从中选取最贴切的一个。`
+      : '请为每道菜选择贴切分类（如：特色热炒、经典主食、养生靓汤、开胃凉菜、酒水饮料）。';
+
+  const prompt = `
+你是一位资深餐饮数字化点餐系统的菜单录入专家。请把下面这段商家口述的菜品清单文本，解析为结构化的菜品数组。
+
+规则：
+1. 每行一般是一道菜，格式通常为"菜名+价格（元）"，可能带括注，例如"水饺13元（小份）"应解析为菜名"水饺（小份）"、价格13；"面条13元（口味自己注明）"中的括注是口味备注说明，应写入 description 而不是菜名。
+2. ${categoryInstruction}
+3. price 必须是正数字（可带小数，如 3.5），绝不能带"元"等符号。
+4. 为每道菜写一段 25~50 字、简洁诱人的美食描述（突出食材与口感），填入 description。
+5. 忽略与菜品无关的空行或杂项文字。
+6. 严格输出 JSON 数组（不要输出任何其它说明文字、不要用 markdown 代码块）：
+[{"name":"菜名","price":6,"category":"分类","description":"美食描述"}]
+
+待解析文本：
+"""
+${params.text.trim().slice(0, 6000)}
+"""
+`.trim();
+
+  const endpoint = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  let modelToTry = config.textModel;
+  const buildPayload = (model: string) => ({
+    model,
+    messages: [
+      {
+        role: 'system',
+        content: '你是菜单结构化解析引擎，只输出严格合法的 JSON 数组，不输出任何多余文本。',
+      },
+      { role: 'user', content: prompt },
+    ],
+    max_tokens: 6000,
+    temperature: 0.1,
+  });
+
+  try {
+    let result = await callOpenAICompatibleEndpoint(endpoint, config.apiKey, buildPayload(modelToTry), 90000);
+    if (!result.ok && result.data?.error?.code === 'model_not_found') {
+      const lower = modelToTry.toLowerCase();
+      if (lower !== modelToTry) {
+        modelToTry = lower;
+        result = await callOpenAICompatibleEndpoint(endpoint, config.apiKey, buildPayload(modelToTry), 90000);
+      }
+    }
+    if (!result.ok) {
+      throw new Error(result.data?.error?.message || `HTTP ${result.status}`);
+    }
+
+    const choice = result.data?.choices?.[0];
+    const content: string = (choice?.message?.content || choice?.message?.reasoning_content || '').trim();
+
+    let jsonString = '';
+    const codeBlock = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlock) {
+      jsonString = codeBlock[1].trim();
+    } else {
+      const arrMatch = content.match(/\[[\s\S]*\]/);
+      if (arrMatch) jsonString = arrMatch[0];
+    }
+
+    let llmItems: ParsedDishItem[] = [];
+    if (jsonString) {
+      try {
+        const parsed = JSON.parse(jsonString);
+        if (Array.isArray(parsed)) {
+          llmItems = parsed
+            .map((it: any) => {
+              let price = 0;
+              if (typeof it?.price === 'number' && it.price > 0) price = it.price;
+              else {
+                const num = parseFloat(String(it?.price ?? '').replace(/[^0-9.]/g, ''));
+                if (num > 0) price = num;
+              }
+              const name = String(it?.name || '').trim();
+              return {
+                name,
+                price,
+                category: String(it?.category || '').trim() || '特色热炒',
+                description: String(it?.description || '').trim(),
+              } as ParsedDishItem;
+            })
+            .filter((it: ParsedDishItem) => it.name && it.price > 0);
+        }
+      } catch {
+        llmItems = [];
+      }
+    }
+
+    if (llmItems.length === 0) {
+      // 大模型完全失败 → 纯本地兜底
+      if (localItems.length === 0) {
+        return { success: false, source: 'local', data: [], error: '未能从文本中解析出任何菜品，请检查格式（每行一条：菜名+价格）' };
+      }
+      return { success: true, source: 'local', data: localItems };
+    }
+
+    // 合并：本地解析出但大模型遗漏的行，追加到结果尾部，确保一条不丢
+    const llmNames = new Set(llmItems.map((it) => it.name.replace(/\s/g, '')));
+    const missing = localItems.filter((it) => !llmNames.has(it.name.replace(/\s/g, '')));
+    if (missing.length > 0) {
+      return { success: true, source: 'merged', data: [...llmItems, ...missing] };
+    }
+
+    return { success: true, source: 'llm', data: llmItems };
+  } catch (err: any) {
+    if (localItems.length > 0) {
+      return { success: true, source: 'local', data: localItems, error: `大模型解析失败已自动降级本地解析：${err?.message || ''}` };
+    }
+    return { success: false, source: 'local', data: [], error: '解析失败: ' + (err?.message || '网络异常') };
+  }
+}
+
+/**
+ * 大模型按菜名生成菜品配图，并转存 Cloudinary 获得永久直链：
+ * 生成 → 下载/解码 → 智能压缩 WebP → 上传云端，返回可直接入库的图片 URL
+ */
+export async function generateDishImageWithAI(params: {
+  dishName: string;
+  tenantId?: string;
+}): Promise<{ success: boolean; url?: string; publicId?: string; error?: string }> {
+  const config = await getLLMConfig(params.tenantId);
+  const endpoint = `${config.baseUrl.replace(/\/+$/, '')}/images/generations`;
+
+  const prompt = `专业餐厅菜单美食摄影：一盘刚出锅的中华名菜「${params.dishName}」，白瓷盘精致摆盘，暖色自然光照，色泽诱人、香气扑鼻的质感，浅景深特写俯拍，高清细节，无文字无水印`;
+
+  const sizesToTry = ['1024x1024', '512x512'];
+  let lastError = '图片模型未返回有效结果';
+
+  for (const size of sizesToTry) {
+    let modelToTry = config.imageModel;
+    const buildPayload = (model: string) => ({ model, prompt, n: 1, size });
+
+    let result = await callOpenAICompatibleEndpoint(endpoint, config.apiKey, buildPayload(modelToTry), 90000);
+    if (!result.ok && result.data?.error?.code === 'model_not_found') {
+      const lower = modelToTry.toLowerCase();
+      if (lower !== modelToTry) {
+        modelToTry = lower;
+        result = await callOpenAICompatibleEndpoint(endpoint, config.apiKey, buildPayload(modelToTry), 90000);
+      }
+    }
+
+    if (!result.ok) {
+      lastError = result.data?.error?.message || `HTTP ${result.status}`;
+      // 尺寸不支持时换下一个尺寸重试；其它错误直接终止
+      const sizeRelated = /size|dimension|resolution/i.test(lastError);
+      if (sizeRelated && size !== sizesToTry[sizesToTry.length - 1]) continue;
+      return { success: false, error: `图片生成失败: ${lastError}` };
+    }
+
+    const item = result.data?.data?.[0];
+    const remoteUrl: string = item?.url || '';
+    const b64: string = item?.b64_json || '';
+
+    let buffer: Buffer | null = null;
+    try {
+      if (b64) {
+        buffer = Buffer.from(b64, 'base64');
+      } else if (remoteUrl) {
+        const imgRes = await fetch(remoteUrl);
+        if (imgRes.ok) {
+          buffer = Buffer.from(await imgRes.arrayBuffer());
+        } else {
+          lastError = `下载生成图片失败: HTTP ${imgRes.status}`;
+        }
+      } else {
+        lastError = '图片模型未返回 url 或 b64_json';
+      }
+    } catch (dlErr: any) {
+      lastError = `下载生成图片异常: ${dlErr?.message || ''}`;
+    }
+
+    if (!buffer || buffer.length === 0) {
+      if (size !== sizesToTry[sizesToTry.length - 1]) continue; // 换尺寸再试一次
+      return { success: false, error: lastError };
+    }
+
+    // 智能压缩为 WebP（失败则原图直传，不阻断流程）
+    let uploadBuffer = buffer;
+    try {
+      const opt = await optimizeImageBuffer(buffer, {
+        maxDimension: config.maxDimension || 1200,
+        quality: config.quality || 82,
+        format: 'webp',
+      });
+      if (opt.isOptimized && opt.buffer) {
+        uploadBuffer = Buffer.from(opt.buffer);
+      }
+    } catch {
+      // ignore optimization failure
+    }
+
+    try {
+      const cloudRes = await uploadToCloudinary(uploadBuffer, 'restaurant_dishes', `ai_${params.dishName}`);
+      return { success: true, url: cloudRes.secure_url, publicId: cloudRes.public_id };
+    } catch (upErr: any) {
+      return { success: false, error: `转存云端失败: ${upErr?.message || ''}` };
+    }
+  }
+
+  return { success: false, error: lastError };
 }

@@ -875,6 +875,143 @@ export async function deleteDish(id: number, tenantId = 'default'): Promise<bool
 }
 
 // ----------------------------------------------------
+// Cross-Tenant Dish Import (主租户菜品库 → 子租户菜品库)
+// ----------------------------------------------------
+export interface DishImportResult {
+  totalSource: number; // 源租户（主租户）菜品总数
+  imported: number; // 本次实际新导入数量
+  skipped: number; // 因同名菜品已存在而跳过的数量
+}
+
+/**
+ * 将 sourceTenantId 的全部菜品一键复制到 targetTenantId。
+ * 按菜品名称（去首尾空白后精确匹配）去重：目标租户已存在的同名菜品自动跳过，
+ * 因此可安全重复执行（幂等），不会产生重复数据。
+ * 整个复制在单个事务内原子完成。
+ */
+export async function importDishesFromTenant(
+  sourceTenantId: string,
+  targetTenantId: string
+): Promise<DishImportResult> {
+  const pool = await ensureDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const sourceCountRes = await client.query(
+      'SELECT count(*)::int AS count FROM dishes WHERE tenant_id = $1',
+      [sourceTenantId]
+    );
+    const totalSource = sourceCountRes.rows[0]?.count || 0;
+
+    const insertRes = await client.query(
+      `INSERT INTO dishes (tenant_id, name, price, category, description, image, status, taste_options)
+       SELECT $1, s.name, s.price, s.category, s.description, s.image, s.status, s.taste_options
+       FROM dishes s
+       WHERE s.tenant_id = $2
+         AND NOT EXISTS (
+           SELECT 1 FROM dishes t
+           WHERE t.tenant_id = $1 AND btrim(t.name) = btrim(s.name)
+         )
+       RETURNING id`,
+      [targetTenantId, sourceTenantId]
+    );
+    const imported = insertRes.rows.length;
+
+    await client.query('COMMIT');
+    return { totalSource, imported, skipped: totalSource - imported };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 一键清空指定租户的全部菜品，返回删除数量。
+ * order_items 与 dishes 无外键约束，历史订单快照（dish_name/price）不受影响。
+ */
+export async function clearAllDishes(tenantId = 'default'): Promise<number> {
+  const pool = await ensureDatabase();
+  const res = await pool.query('DELETE FROM dishes WHERE tenant_id = $1 RETURNING id', [tenantId]);
+  return res.rows.length;
+}
+
+export interface BatchDishInput {
+  name: string;
+  price: number;
+  category?: string;
+  description?: string;
+  image?: string;
+  status?: number;
+  taste_options?: string;
+}
+
+/**
+ * 批量创建菜品（事务原子）。默认按名称去重：目标租户已存在的同名菜品自动跳过，
+ * 防止重复点击"确认添加"造成重复数据。
+ */
+export async function createDishesBatch(
+  items: BatchDishInput[],
+  tenantId = 'default'
+): Promise<{ created: number; skipped: number; invalid: number }> {
+  const pool = await ensureDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 预取现有菜名集合用于去重（btrim 口径与拉取功能保持一致）
+    const existingRes = await client.query(
+      'SELECT btrim(name) AS name FROM dishes WHERE tenant_id = $1',
+      [tenantId]
+    );
+    const existingNames = new Set<string>(existingRes.rows.map((r: any) => r.name));
+
+    let created = 0;
+    let skipped = 0;
+    let invalid = 0;
+
+    for (const item of items) {
+      const name = (item.name || '').trim();
+      const price = Number(item.price);
+      if (!name || !(price >= 0)) {
+        invalid++;
+        continue;
+      }
+      if (existingNames.has(name)) {
+        skipped++;
+        continue;
+      }
+      await client.query(
+        `INSERT INTO dishes (tenant_id, name, price, category, description, image, status, taste_options)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          tenantId,
+          name,
+          price,
+          (item.category || '').trim() || '特色热炒',
+          (item.description || '').trim(),
+          item.image || '',
+          item.status !== undefined ? Number(item.status) : 1,
+          (item.taste_options || '').trim(),
+        ]
+      );
+      existingNames.add(name);
+      created++;
+    }
+
+    await client.query('COMMIT');
+    return { created, skipped, invalid };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ----------------------------------------------------
 // Dining Tables Operations (Isolated by Tenant)
 // ----------------------------------------------------
 export async function getAllTables(onlyFree = false, tenantId = 'default'): Promise<DiningTable[]> {
