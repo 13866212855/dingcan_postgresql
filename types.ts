@@ -52,6 +52,7 @@ export interface Order {
   points_earned: number;
   final_amount: number;
   status: '待处理' | '制作中' | '已完成' | '已取消';
+  handler_name?: string; // 处理该订单的接单员姓名（staff 处理留痕）
   notes: string;
   user_id?: string;
   created_at: string;
@@ -85,6 +86,17 @@ export interface AppUser {
   delivery_address?: string;
   delivery_contact?: string;
   delivery_phone?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface StaffUser {
+  id: number;
+  tenant_id?: string;
+  name: string;
+  phone: string;
+  role: string; // 'order_handler' = 接单员
+  enabled: number; // 1=启用, 0=停用
   created_at?: string;
   updated_at?: string;
 }

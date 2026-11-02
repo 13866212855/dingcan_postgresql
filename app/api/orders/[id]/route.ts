@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings } from '@/lib/db';
+import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings, verifyStaffSession } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
 
 export async function GET(
@@ -44,7 +45,20 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      await updateOrderStatus(id, status, tenantId);
+
+      // 若操作者为本租户接单员（staff会话），将处理人姓名写入订单留痕
+      let handlerName = '';
+      const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
+      if (staffPayload && staffPayload.tenantId === tenantId) {
+        try {
+          const staff = await verifyStaffSession(staffPayload);
+          if (staff) handlerName = staff.name;
+        } catch {
+          // 校验异常时按匿名处理，不阻断订单流转
+        }
+      }
+
+      await updateOrderStatus(id, status, tenantId, handlerName);
     }
 
     if (paymentStatus) {

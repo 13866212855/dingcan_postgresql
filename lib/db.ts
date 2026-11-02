@@ -412,6 +412,18 @@ export async function ensureDatabase(): Promise<Pool> {
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
           PRIMARY KEY (tenant_id, id)
         );
+
+        CREATE TABLE IF NOT EXISTS staff_users (
+          id SERIAL PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          password TEXT NOT NULL DEFAULT '123456',
+          role TEXT NOT NULL DEFAULT 'order_handler',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
       `);
 
       // 2. Safe schema upgrade migrations: add tenant_id column if missing in older tables
@@ -419,6 +431,7 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE dishes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE dishes ADD COLUMN IF NOT EXISTS taste_options TEXT NOT NULL DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_name TEXT DEFAULT '';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -527,6 +540,7 @@ export async function ensureDatabase(): Promise<Pool> {
         CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
         CREATE INDEX IF NOT EXISTS idx_users_tenant_phone ON users(tenant_id, phone);
         CREATE INDEX IF NOT EXISTS idx_settings_tenant ON settings(tenant_id, key);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_tenant_phone ON staff_users(tenant_id, phone);
       `);
 
       // 3. Seed tenants
@@ -1009,6 +1023,147 @@ export async function createDishesBatch(
   } finally {
     client.release();
   }
+}
+
+// ----------------------------------------------------
+// Staff Users (子租户接单员 order_handler) Operations
+// 严格租户隔离：所有查询/变更均带 tenant_id 条件
+// ----------------------------------------------------
+export interface StaffUserRecord {
+  id: number;
+  tenant_id: string;
+  name: string;
+  phone: string;
+  role: string; // 'order_handler' = 接单员
+  enabled: number; // 1=启用 0=停用（停用立即失去登录与处理权限）
+  created_at?: string;
+  updated_at?: string;
+}
+
+const STAFF_COLS = 'id, tenant_id, name, phone, role, enabled, created_at, updated_at';
+
+export async function getStaffByTenant(tenantId = 'default'): Promise<StaffUserRecord[]> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${STAFF_COLS} FROM staff_users WHERE tenant_id = $1 ORDER BY id ASC`,
+    [tenantId]
+  );
+  return res.rows.map((row) => formatRow<StaffUserRecord>(row));
+}
+
+export async function createStaffUser(
+  tenantId: string,
+  data: { name: string; phone: string; password?: string }
+): Promise<StaffUserRecord> {
+  const pool = await ensureDatabase();
+  const name = (data.name || '').trim();
+  const phone = (data.phone || '').trim();
+  const password = (data.password || '').trim() || '123456';
+  if (!name) throw new Error('接单员姓名不能为空');
+  if (!/^[0-9]{5,20}$/.test(phone)) throw new Error('请输入有效的手机号（5-20位数字）');
+
+  const dup = await pool.query(
+    'SELECT id FROM staff_users WHERE tenant_id = $1 AND phone = $2',
+    [tenantId, phone]
+  );
+  if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已是本店接单员，请勿重复添加`);
+
+  const res = await pool.query(
+    `INSERT INTO staff_users (tenant_id, name, phone, password, role, enabled)
+     VALUES ($1, $2, $3, $4, 'order_handler', 1)
+     RETURNING ${STAFF_COLS}`,
+    [tenantId, name, phone, password]
+  );
+  return formatRow<StaffUserRecord>(res.rows[0]);
+}
+
+export async function updateStaffUser(
+  tenantId: string,
+  id: number,
+  patch: { name?: string; phone?: string; password?: string; enabled?: number }
+): Promise<StaffUserRecord | null> {
+  const pool = await ensureDatabase();
+  const exists = await pool.query(
+    'SELECT id FROM staff_users WHERE id = $1 AND tenant_id = $2',
+    [id, tenantId]
+  );
+  if (exists.rows.length === 0) return null;
+
+  if (patch.phone !== undefined) {
+    const phone = patch.phone.trim();
+    if (!/^[0-9]{5,20}$/.test(phone)) throw new Error('请输入有效的手机号（5-20位数字）');
+    const dup = await pool.query(
+      'SELECT id FROM staff_users WHERE tenant_id = $1 AND phone = $2 AND id != $3',
+      [tenantId, phone, id]
+    );
+    if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已被本店其他接单员使用`);
+  }
+
+  const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const values: any[] = [];
+  let i = 1;
+  if (patch.name !== undefined && patch.name.trim()) {
+    updates.push(`name = $${i++}`);
+    values.push(patch.name.trim());
+  }
+  if (patch.phone !== undefined) {
+    updates.push(`phone = $${i++}`);
+    values.push(patch.phone.trim());
+  }
+  if (patch.password !== undefined && patch.password.trim()) {
+    updates.push(`password = $${i++}`);
+    values.push(patch.password.trim());
+  }
+  if (patch.enabled !== undefined) {
+    updates.push(`enabled = $${i++}`);
+    values.push(patch.enabled ? 1 : 0);
+  }
+
+  values.push(id, tenantId);
+  const res = await pool.query(
+    `UPDATE staff_users SET ${updates.join(', ')} WHERE id = $${i++} AND tenant_id = $${i} RETURNING ${STAFF_COLS}`,
+    values
+  );
+  return res.rows[0] ? formatRow<StaffUserRecord>(res.rows[0]) : null;
+}
+
+export async function deleteStaffUser(tenantId: string, id: number): Promise<boolean> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    'DELETE FROM staff_users WHERE id = $1 AND tenant_id = $2 RETURNING id',
+    [id, tenantId]
+  );
+  return res.rows.length > 0;
+}
+
+/** 接单员登录校验：本租户 + 手机号 + 密码 + 启用状态 全部匹配才放行 */
+export async function verifyStaffLogin(
+  tenantId: string,
+  phone: string,
+  password: string
+): Promise<StaffUserRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${STAFF_COLS} FROM staff_users
+     WHERE tenant_id = $1 AND phone = $2 AND password = $3 AND enabled = 1`,
+    [tenantId, (phone || '').trim(), (password || '').trim()]
+  );
+  return res.rows[0] ? formatRow<StaffUserRecord>(res.rows[0]) : null;
+}
+
+/** 会话cookie静默校验：每次后台check时回查数据库，停用/删除立即失效（技能Pillar 3 静默验证要求） */
+export async function verifyStaffSession(payload: {
+  id: number;
+  tenantId: string;
+  phone: string;
+}): Promise<StaffUserRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${STAFF_COLS} FROM staff_users
+     WHERE id = $1 AND tenant_id = $2 AND phone = $3 AND enabled = 1`,
+    [payload.id, payload.tenantId, payload.phone]
+  );
+  return res.rows[0] ? formatRow<StaffUserRecord>(res.rows[0]) : null;
 }
 
 // ----------------------------------------------------
@@ -1586,7 +1741,8 @@ export async function getOrderById(id: string, tenantId?: string): Promise<Order
 export async function updateOrderStatus(
   id: string,
   status: '待处理' | '制作中' | '已完成' | '已取消',
-  tenantId?: string
+  tenantId?: string,
+  handlerName?: string
 ): Promise<boolean> {
   const pool = await ensureDatabase();
   const order = await getOrderById(id, tenantId);
@@ -1594,11 +1750,19 @@ export async function updateOrderStatus(
 
   const currentTenant = order.tenant_id || tenantId || 'default';
   const nowIso = new Date().toISOString();
-  await pool.query('UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3', [
-    status,
-    nowIso,
-    id,
-  ]);
+  // 接单员（staff）处理订单时记录处理人姓名；管理员操作不覆盖已有记录
+  if (handlerName && handlerName.trim()) {
+    await pool.query(
+      'UPDATE orders SET status = $1, updated_at = $2, handler_name = $3 WHERE id = $4',
+      [status, nowIso, handlerName.trim(), id]
+    );
+  } else {
+    await pool.query('UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3', [
+      status,
+      nowIso,
+      id,
+    ]);
+  }
 
   if (status === '已完成' || status === '已取消') {
     if (order.order_type === '堂食' && order.table_no) {

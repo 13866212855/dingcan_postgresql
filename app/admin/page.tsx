@@ -33,16 +33,18 @@ import {
   ChevronDown,
   Brain,
   CloudDownload,
+  UserCog,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
+import StaffManagement from '@/components/admin/StaffManagement';
 import TableManagement from '@/components/admin/TableManagement';
 import MemberManagement from '@/components/admin/MemberManagement';
 import SettingsManagement from '@/components/admin/SettingsManagement';
 import StoreManagement from '@/components/admin/StoreManagement';
 import TenantManagement from '@/components/admin/TenantManagement';
 import LLMManagement from '@/components/admin/LLMManagement';
-import { Dish, Order, Tenant } from '@/types';
+import { Dish, Order, Tenant, StaffUser } from '@/types';
 import { safeSetItem, safeRemoveItem } from '@/lib/storage';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
 
@@ -53,6 +55,13 @@ export default function AdminPage() {
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // 接单员（order_handler）会话与登录模式（mymultenant Tier 3 角色）
+  const [staffInfo, setStaffInfo] = useState<{ id: number; tenantId: string; name: string; phone: string } | null>(null);
+  const [loginMode, setLoginMode] = useState<'admin' | 'staff'>('admin');
+  const [staffPhone, setStaffPhone] = useState('');
+  const [staffPass, setStaffPass] = useState('');
+  const isStaffMode = staffInfo !== null;
 
   // Multi-Tenant state:
   // 当直接访问 /admin 时（URL 无 tenant 参数），坚决严格锁定总后台 'default'，杜绝继承前台遗留的分店 cookie/localStorage！
@@ -79,7 +88,8 @@ export default function AdminPage() {
   const [isTenantDropdownOpen, setIsTenantDropdownOpen] = useState(false);
 
   // 判定是否为集团总店(主店)超级管理员；子分店(如 gcxq)仅具备本分店运营权限，严格隔离其他分店与总店信息
-  const isMasterAdmin = currentTenantId === 'default';
+  // 接单员(staff)会话无论处于哪个租户都绝不算管理员（物理级权限裁剪）
+  const isMasterAdmin = currentTenantId === 'default' && !isStaffMode;
 
   // Store Brand state
   const [storeInfo, setStoreInfo] = useState<{ name: string; logo: string; slogan: string }>({
@@ -106,13 +116,14 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Active Admin Tab: 'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings' | 'llm'
+  // Active Admin Tab: 'orders' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
   const [activeTabState, setActiveTabState] = useState<
-    'orders' | 'dishes' | 'tables' | 'members' | 'store' | 'tenants' | 'settings' | 'llm'
+    'orders' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
   >('orders');
 
-  // 若处于子分店后台，严格杜绝非法进入“连锁分店”管理Tab（通过计算派生保证永不越权）
-  const activeTab = (!isMasterAdmin && activeTabState === 'tenants') ? 'orders' : activeTabState;
+  // 权限裁剪（派生保证永不越权）：接单员永远锁定订单中心；子分店后台永远进不了"连锁分店"管理Tab
+  const activeTab =
+    isStaffMode || (!isMasterAdmin && activeTabState === 'tenants') ? 'orders' : activeTabState;
   const setActiveTab = setActiveTabState;
 
   // Orders State
@@ -191,10 +202,28 @@ export default function AdminPage() {
         const res = await fetch('/api/admin/check');
         const data = await res.json();
         if (!isCancelled) {
-          setIsAuthenticated(Boolean(data?.authenticated));
+          if (data?.authenticated) {
+            if (data.role === 'staff' && data.staff) {
+              // 接单员会话：仅当其所属租户与当前后台租户一致时才放行（跨租户URL显示登录页）
+              if (data.staff.tenantId === currentTenantId) {
+                setStaffInfo(data.staff);
+                setIsAuthenticated(true);
+              } else {
+                setStaffInfo(null);
+                setIsAuthenticated(false);
+              }
+            } else {
+              setStaffInfo(null);
+              setIsAuthenticated(true);
+            }
+          } else {
+            setStaffInfo(null);
+            setIsAuthenticated(false);
+          }
         }
       } catch {
         if (!isCancelled) {
+          setStaffInfo(null);
           setIsAuthenticated(false);
         }
       }
@@ -413,6 +442,7 @@ export default function AdminPage() {
       const data = await res.json();
       if (data.success) {
         setIsAuthenticated(true);
+        setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
         safeSetItem('restaurant_admin_auth', 'true');
         updateActiveTenant(currentTenantId);
       } else {
@@ -433,7 +463,37 @@ export default function AdminPage() {
       // ignore
     }
     safeRemoveItem('restaurant_admin_auth');
+    setStaffInfo(null);
     setIsAuthenticated(false);
+  };
+
+  // 接单员手机号登录（mymultenant Tier 3：登录后仅见本店订单中心）
+  const handleStaffLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    unlockAudio();
+    setIsAudioActivated(true);
+    setLoginError('');
+    setIsLoggingIn(true);
+    try {
+      const res = await fetch('/api/admin/staff-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: staffPhone, password: staffPass, tenant: currentTenantId }),
+      });
+      const data = await res.json();
+      if (data.success && data.staff) {
+        setStaffInfo(data.staff);
+        setIsAuthenticated(true);
+        setActiveTab('orders');
+        setStaffPass('');
+      } else {
+        setLoginError(data.error || '接单员登录失败');
+      }
+    } catch (err: any) {
+      setLoginError('登录请求失败: ' + (err?.message || ''));
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   // Update Order Status
@@ -702,42 +762,108 @@ export default function AdminPage() {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-neutral-700 mb-1">用户名</label>
-              <input
-                id="admin-username"
-                type="text"
-                required
-                value={loginUser}
-                onChange={(e) => setLoginUser(e.target.value)}
-                placeholder="请输入管理员账号"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-neutral-700 mb-1">登录密码</label>
-              <input
-                id="admin-password"
-                type="password"
-                required
-                value={loginPass}
-                onChange={(e) => setLoginPass(e.target.value)}
-                placeholder="请输入密码"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
-              />
-            </div>
-
+          {/* 登录身份模式切换：管理员 / 接单员 */}
+          <div className="mb-4 grid grid-cols-2 gap-1.5 p-1 bg-neutral-100 rounded-xl">
             <button
-              id="btn-admin-login"
-              type="submit"
-              disabled={isLoggingIn}
-              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
+              type="button"
+              onClick={() => { setLoginMode('admin'); setLoginError(''); }}
+              className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                loginMode === 'admin' ? 'bg-white text-amber-700 shadow-xs' : 'text-neutral-500 hover:text-neutral-700'
+              }`}
             >
-              {isLoggingIn ? '验证中...' : '立即登录'}
+              <Building2 className="w-3.5 h-3.5" />
+              <span>管理员登录</span>
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => { setLoginMode('staff'); setLoginError(''); }}
+              className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                loginMode === 'staff' ? 'bg-white text-indigo-700 shadow-xs' : 'text-neutral-500 hover:text-neutral-700'
+              }`}
+            >
+              <UserCog className="w-3.5 h-3.5" />
+              <span>接单员登录</span>
+            </button>
+          </div>
+
+          {loginMode === 'admin' ? (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">用户名</label>
+                <input
+                  id="admin-username"
+                  type="text"
+                  required
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                  placeholder="请输入管理员账号"
+                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">登录密码</label>
+                <input
+                  id="admin-password"
+                  type="password"
+                  required
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  placeholder="请输入密码"
+                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                />
+              </div>
+
+              <button
+                id="btn-admin-login"
+                type="submit"
+                disabled={isLoggingIn}
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
+              >
+                {isLoggingIn ? '验证中...' : '立即登录'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleStaffLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">接单员手机号</label>
+                <input
+                  id="staff-phone"
+                  type="tel"
+                  required
+                  value={staffPhone}
+                  onChange={(e) => setStaffPhone(e.target.value)}
+                  placeholder="店长为您配置的手机号"
+                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1">登录密码</label>
+                <input
+                  id="staff-password"
+                  type="password"
+                  required
+                  value={staffPass}
+                  onChange={(e) => setStaffPass(e.target.value)}
+                  placeholder="初始密码默认 123456"
+                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                />
+              </div>
+
+              <button
+                id="btn-staff-login"
+                type="submit"
+                disabled={isLoggingIn}
+                className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-sky-600 hover:from-indigo-600 hover:to-sky-700 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
+              >
+                {isLoggingIn ? '验证中...' : '登录接单工作台'}
+              </button>
+              <p className="text-[10px] text-neutral-400 text-center leading-relaxed">
+                接单员登录后仅显示本店订单中心：接收新单提醒、接单制作、出餐完成、核对收款
+              </p>
+            </form>
+          )}
 
           {/* Link to Front */}
           <div className="mt-6 pt-4 border-t border-neutral-100 text-center">
@@ -843,6 +969,14 @@ export default function AdminPage() {
                     <span>分店后台</span>
                   </div>
                 )}
+
+                {/* 接单员身份徽标：一眼可见当前登录的是本店接单员 */}
+                {isStaffMode && staffInfo && (
+                  <div className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-indigo-500/25 border border-indigo-400/50 text-indigo-200 text-[11px] font-bold">
+                    <UserCog className="w-3 h-3 text-indigo-300" />
+                    <span>接单员 · {staffInfo.name}</span>
+                  </div>
+                )}
               </div>
               <p className="text-[10px] text-amber-400">
                 {storeInfo.slogan || (isMasterAdmin ? '多租户架构 · 数据隔离 · 桌位协同 · 会员积分' : '分店独立运营 · 数据严格物理隔离')}
@@ -870,58 +1004,82 @@ export default function AdminPage() {
               )}
             </button>
 
-            <button
-              id="tab-dishes"
-              onClick={() => setActiveTab('dishes')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'dishes'
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <Utensils className="w-3.5 h-3.5" />
-              <span>菜品库</span>
-              <span className="text-[10px] text-neutral-400">({dishes.length})</span>
-            </button>
+            {!isStaffMode && (
+              <button
+                id="tab-dishes"
+                onClick={() => setActiveTab('dishes')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'dishes'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Utensils className="w-3.5 h-3.5" />
+                <span>菜品库</span>
+                <span className="text-[10px] text-neutral-400">({dishes.length})</span>
+              </button>
+            )}
 
-            <button
-              id="tab-tables"
-              onClick={() => setActiveTab('tables')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'tables'
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <MapPin className="w-3.5 h-3.5" />
-              <span>餐桌管理</span>
-            </button>
+            {!isStaffMode && (
+              <button
+                id="tab-tables"
+                onClick={() => setActiveTab('tables')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'tables'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                <span>餐桌管理</span>
+              </button>
+            )}
 
-            <button
-              id="tab-members"
-              onClick={() => setActiveTab('members')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'members'
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>会员积分</span>
-            </button>
+            {!isStaffMode && (
+              <button
+                id="tab-members"
+                onClick={() => setActiveTab('members')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'members'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>会员积分</span>
+              </button>
+            )}
 
-            <button
-              id="tab-store"
-              onClick={() => setActiveTab('store')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'store'
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <Store className="w-3.5 h-3.5" />
-              <span>店面品牌</span>
-            </button>
+            {/* 接单员管理：店长为本店配置接单账号（mymultenant Tier 3） */}
+            {!isStaffMode && (
+              <button
+                id="tab-staff"
+                onClick={() => setActiveTab('staff')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'staff'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <UserCog className="w-3.5 h-3.5 text-indigo-400" />
+                <span>接单员</span>
+              </button>
+            )}
+
+            {!isStaffMode && (
+              <button
+                id="tab-store"
+                onClick={() => setActiveTab('store')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'store'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Store className="w-3.5 h-3.5" />
+                <span>店面品牌</span>
+              </button>
+            )}
 
             {/* 仅总店显示连锁分店管理菜单，子分店完全不显示 */}
             {isMasterAdmin && (
@@ -944,34 +1102,38 @@ export default function AdminPage() {
               </button>
             )}
 
-            <button
-              id="tab-settings"
-              onClick={() => setActiveTab('settings')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'settings'
-                  ? 'bg-amber-500 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>收款配置</span>
-            </button>
+            {!isStaffMode && (
+              <button
+                id="tab-settings"
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'settings'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>收款配置</span>
+              </button>
+            )}
 
-            <button
-              id="tab-llm"
-              onClick={() => setActiveTab('llm')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'llm'
-                  ? 'bg-gradient-to-r from-amber-500 to-indigo-600 text-white shadow-xs'
-                  : 'text-neutral-300 hover:text-white'
-              }`}
-            >
-              <Brain className="w-3.5 h-3.5 text-amber-400" />
-              <span>AI大脑配置</span>
-              <span className="text-[9px] bg-indigo-500/80 text-white px-1.5 py-0.2 rounded-full font-sans">
-                Agnes
-              </span>
-            </button>
+            {!isStaffMode && (
+              <button
+                id="tab-llm"
+                onClick={() => setActiveTab('llm')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'llm'
+                    ? 'bg-gradient-to-r from-amber-500 to-indigo-600 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Brain className="w-3.5 h-3.5 text-amber-400" />
+                <span>AI大脑配置</span>
+                <span className="text-[9px] bg-indigo-500/80 text-white px-1.5 py-0.2 rounded-full font-sans">
+                  Agnes
+                </span>
+              </button>
+            )}
           </div>
 
           {/* User info & Links & Sound control */}
@@ -1029,16 +1191,20 @@ export default function AdminPage() {
 
         {/* Mobile Navigation Tabs */}
         <div className="flex md:hidden overflow-x-auto px-2 py-2 bg-neutral-800/90 border-t border-neutral-700 space-x-1">
-          {[
-            { id: 'orders', label: '订单中心', icon: ClipboardList },
-            { id: 'dishes', label: '菜品库', icon: Utensils },
-            { id: 'tables', label: '餐桌管理', icon: MapPin },
-            { id: 'members', label: '会员积分', icon: Users },
-            { id: 'store', label: '店面品牌', icon: Store },
-            ...(isMasterAdmin ? [{ id: 'tenants', label: '连锁门店', icon: Building2 }] : []),
-            { id: 'settings', label: '收款配置', icon: Settings },
-            { id: 'llm', label: 'AI大脑', icon: Brain },
-          ].map((item) => {
+          {(isStaffMode
+            ? [{ id: 'orders', label: '本店订单', icon: ClipboardList }]
+            : [
+                { id: 'orders', label: '订单中心', icon: ClipboardList },
+                { id: 'dishes', label: '菜品库', icon: Utensils },
+                { id: 'tables', label: '餐桌管理', icon: MapPin },
+                { id: 'members', label: '会员积分', icon: Users },
+                { id: 'staff', label: '接单员', icon: UserCog },
+                { id: 'store', label: '店面品牌', icon: Store },
+                ...(isMasterAdmin ? [{ id: 'tenants', label: '连锁门店', icon: Building2 }] : []),
+                { id: 'settings', label: '收款配置', icon: Settings },
+                { id: 'llm', label: 'AI大脑', icon: Brain },
+              ]
+          ).map((item) => {
             const Icon = item.icon;
             const isSel = activeTab === item.id;
             return (
@@ -1279,6 +1445,16 @@ export default function AdminPage() {
                             >
                               {isPaid ? '✓ 已收款' : '✕ 未收款'}
                             </button>
+
+                            {/* 接单员处理留痕徽标 */}
+                            {order.handler_name && (
+                              <span
+                                className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold"
+                                title="该订单由本店接单员处理"
+                              >
+                                接单:{order.handler_name}
+                              </span>
+                            )}
                           </div>
 
                           <div className="text-[10px] text-neutral-400 font-mono mt-1">
@@ -1622,6 +1798,9 @@ export default function AdminPage() {
         ) : activeTab === 'members' ? (
           /* ================= MEMBER MANAGEMENT MODULE ================= */
           <MemberManagement tenantId={currentTenantId} />
+        ) : activeTab === 'staff' ? (
+          /* ================= STAFF (ORDER HANDLER) MANAGEMENT MODULE ================= */
+          <StaffManagement tenantId={currentTenantId} />
         ) : activeTab === 'store' ? (
           /* ================= STORE BRAND MODULE ================= */
           <StoreManagement

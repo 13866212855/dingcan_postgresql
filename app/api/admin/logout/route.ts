@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 
 export async function POST(req: NextRequest) {
   const response = NextResponse.json({
@@ -7,5 +8,6 @@ export async function POST(req: NextRequest) {
   });
 
   response.cookies.delete('restaurant_admin_auth');
+  response.cookies.delete(STAFF_AUTH_COOKIE);
   return response;
 }
