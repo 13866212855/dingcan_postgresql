@@ -1707,7 +1707,7 @@ export default function AdminPage() {
                                   alt={dish.name}
                                   fill
                                   sizes="56px"
-                                  className={`object-contain p-1 bg-neutral-100 ${!isOnShelf ? 'grayscale opacity-60' : ''}`}
+                                  className={`object-contain p-1 ${!isOnShelf ? 'grayscale opacity-60' : ''}`}
                                   referrerPolicy="no-referrer"
                                 />
                               </div>
