@@ -1701,12 +1701,13 @@ export default function AdminPage() {
                           <tr key={dish.id} className="hover:bg-neutral-50/70 transition-colors">
                             {/* Image */}
                             <td className="py-3 px-4">
-                              <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-neutral-100 border border-neutral-200">
+                              <div className="relative w-14 h-14 aspect-square rounded-xl overflow-hidden bg-neutral-100 border border-neutral-200 flex items-center justify-center shrink-0 shadow-2xs">
                                 <Image
                                   src={dish.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80'}
                                   alt={dish.name}
                                   fill
-                                  className={`object-cover ${!isOnShelf ? 'grayscale opacity-60' : ''}`}
+                                  sizes="56px"
+                                  className={`object-contain p-1 bg-neutral-100 ${!isOnShelf ? 'grayscale opacity-60' : ''}`}
                                   referrerPolicy="no-referrer"
                                 />
                               </div>

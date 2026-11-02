@@ -414,7 +414,7 @@ function SmartBatchInner({
                               <img
                                 src={row.image}
                                 alt={row.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-contain p-0.5 bg-neutral-100"
                                 referrerPolicy="no-referrer"
                               />
                             ) : row.imgStatus === 'generating' ? (

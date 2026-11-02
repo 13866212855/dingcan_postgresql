@@ -560,17 +560,18 @@ function DishFormInner({
 
           {/* Current Image Preview & Upload Input */}
           <div className="flex gap-3 items-center mb-3">
-            <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-neutral-100 border border-neutral-200 shrink-0">
+            <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-neutral-100 border border-neutral-200 shrink-0 flex items-center justify-center shadow-2xs">
               {image ? (
                 <Image
                   src={image}
                   alt="菜品图片"
                   fill
-                  className="object-cover"
+                  sizes="80px"
+                  className="object-contain p-1 bg-neutral-100"
                   referrerPolicy="no-referrer"
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-neutral-400">无图</div>
+                <div className="flex items-center justify-center h-full text-neutral-400 text-xs">无图</div>
               )}
             </div>
             <div className="flex-1 space-y-2">
