@@ -4,7 +4,7 @@
 
 ---
 
-## 🌟 核心功能特性
+## 🌟 核心功能特性2
 
 ### 1. 多租户架构与严格数据隔离 (Multi-Tenant Architecture)
 - **严格行级数据隔离**：所有核心数据表（菜品 `dishes`、订单 `orders`、餐桌 `dining_tables`、会员 `app_users`、门店配置 `app_settings`）均统一建立 `tenant_id` 联合索引与过滤约束，确保跨门店、跨租户数据绝对物理隔离、不可越权访问。
