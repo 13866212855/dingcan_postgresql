@@ -141,6 +141,12 @@ export default function AdminPage() {
   const [newOrderToast, setNewOrderToast] = useState<string>('');
   const [isAudioActivated, setIsAudioActivated] = useState(false);
   const knownOrderIdsRef = React.useRef<Set<string>>(new Set());
+  const isBaselineLoadedRef = React.useRef<boolean>(false);
+  const soundEnabledRef = React.useRef<boolean>(true);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   // Dishes State
   const [dishes, setDishes] = useState<Dish[]>([]);
@@ -335,9 +341,16 @@ export default function AdminPage() {
         if (data.success && Array.isArray(data.data)) {
           const fetchedOrders: Order[] = data.data;
 
-          // Detect newly submitted orders (仅针对待处理公共新订单触发蜂鸣与语音播报)
-          if (knownOrderIdsRef.current.size > 0) {
-            const brandNew = fetchedOrders.filter((o) => !knownOrderIdsRef.current.has(o.id) && o.status === '待处理');
+          if (!isBaselineLoadedRef.current) {
+            // 首次拉取：静默建立初始订单基线集合，不误播报已有历史订单
+            isBaselineLoadedRef.current = true;
+            knownOrderIdsRef.current = new Set(fetchedOrders.map((o) => o.id));
+          } else {
+            // 后续轮询：精准捕捉新到达的【待处理】公共新订单，触发和弦与语音播报
+            const brandNew = fetchedOrders.filter(
+              (o) => !knownOrderIdsRef.current.has(o.id) && o.status === '待处理'
+            );
+
             if (brandNew.length > 0) {
               const first = brandNew[0];
               const detail = first.table_no
@@ -346,7 +359,7 @@ export default function AdminPage() {
                   ? `外卖客户${first.delivery_contact}有新单`
                   : undefined;
 
-              if (soundEnabled) {
+              if (soundEnabledRef.current) {
                 alertNewOrder(brandNew.length, detail);
               }
 
@@ -359,10 +372,11 @@ export default function AdminPage() {
               } 金额: ¥${(first.final_amount ?? first.total_amount).toFixed(2)}`;
               setNewOrderToast(bannerText);
             }
+
+            // 更新已知订单ID全量集合
+            knownOrderIdsRef.current = new Set(fetchedOrders.map((o) => o.id));
           }
 
-          // Keep known set up to date
-          knownOrderIdsRef.current = new Set(fetchedOrders.map((o) => o.id));
           setOrders(fetchedOrders);
         }
       } catch (err) {
@@ -371,8 +385,14 @@ export default function AdminPage() {
         if (showSpinner) setLoadingOrders(false);
       }
     },
-    [soundEnabled, currentTenantId]
+    [currentTenantId]
   );
+
+  // 切换租户时重置基线状态，重新建立新租户的订单基线
+  useEffect(() => {
+    isBaselineLoadedRef.current = false;
+    knownOrderIdsRef.current = new Set();
+  }, [currentTenantId]);
 
   // Fetch initial data on login
   useEffect(() => {
@@ -407,6 +427,7 @@ export default function AdminPage() {
           if (oRes?.success && Array.isArray(oRes.data)) {
             setOrders(oRes.data);
             knownOrderIdsRef.current = new Set(oRes.data.map((o: Order) => o.id));
+            isBaselineLoadedRef.current = true;
           }
         }
       } catch (err) {
@@ -421,16 +442,24 @@ export default function AdminPage() {
     };
   }, [isAuthenticated, currentTenantId]);
 
-  // Auto Refresh Interval
+  // Auto Refresh Interval（无论前台还是后台标签页，均保持轮询；切换至前台时立即拉取）
   useEffect(() => {
     if (!isAuthenticated || !autoRefresh) return;
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        return;
-      }
       fetchOrders(false);
-    }, 5000);
-    return () => clearInterval(interval);
+    }, 4000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(false);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [isAuthenticated, autoRefresh, fetchOrders]);
 
   // 智能识别登录（方案二核心）：纯数字账号走接单员（手机号+密码）通道；其他走管理员账号通道。
@@ -1203,16 +1232,16 @@ export default function AdminPage() {
           onClick={() => {
             unlockAudio();
             setIsAudioActivated(true);
-            playOrderChime();
+            alertNewOrder(1, '语音播报测试成功');
           }}
           className="bg-amber-500/20 border-b border-amber-500/40 text-amber-200 px-4 py-2 text-xs flex items-center justify-between cursor-pointer hover:bg-amber-500/30 transition-colors"
         >
           <div className="flex items-center space-x-2">
             <Volume2 className="w-4 h-4 text-amber-400 shrink-0 animate-bounce" />
-            <span>📱 手机语音提示：点此激活新订单语音/提示音播报</span>
+            <span>📱 手机/电脑提示音：点此激活新订单语音/提示音播报</span>
           </div>
           <span className="text-[11px] bg-amber-500 text-neutral-900 font-bold px-2.5 py-0.5 rounded-md">
-            立即激活
+            立即激活试听
           </span>
         </div>
       )}
@@ -1305,17 +1334,25 @@ export default function AdminPage() {
                   />
                 </div>
 
-                {/* Sound Toggle */}
+                {/* Sound Toggle & Test */}
                 <button
-                  onClick={() => setSoundEnabled(!soundEnabled)}
-                  title={soundEnabled ? '新订单提示音：开' : '新订单提示音：关'}
-                  className={`p-2 rounded-xl text-xs border transition-colors ${
+                  onClick={() => {
+                    const next = !soundEnabled;
+                    setSoundEnabled(next);
+                    if (next) {
+                      unlockAudio();
+                      alertNewOrder(1, '提示音已开启');
+                    }
+                  }}
+                  title={soundEnabled ? '提示音已开启（点击可试听/关闭）' : '提示音已关闭（点击开启）'}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center space-x-1.5 transition-colors cursor-pointer ${
                     soundEnabled
-                      ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                      : 'bg-neutral-100 text-neutral-400 border-neutral-200'
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 shadow-2xs'
+                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 hover:bg-neutral-200'
                   }`}
                 >
-                  {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                  {soundEnabled ? <Volume2 className="w-4 h-4 text-amber-600" /> : <VolumeX className="w-4 h-4" />}
+                  <span>{soundEnabled ? '提示音：开' : '提示音：关'}</span>
                 </button>
 
                 {/* Auto Refresh Toggle */}
