@@ -5,7 +5,11 @@ description: >
   to configure, isolate, and empower sub-tenant operational staff roles (e.g., maintenance technicians,
   store order processors, branch dispatchers). Covers multi-tenant schema isolation, device & phone
   binding, persistent token caching, automatic workbench deep-linking, anti-loop frontend previewing,
-  RBAC permission clipping, and full migration blueprints for scenarios like multi-restaurant food ordering.
+  RBAC permission clipping, identity-blind single-form login with smart account detection (staff never
+  discovers the admin backend exists), login-time identity-scope cookies for master-only destructive
+  privileges (fail-closed), credential-first cross-tenant login with tenant self-healing, dual-session
+  hygiene with instant revocation, and full migration blueprints for scenarios like multi-restaurant
+  food ordering.
 ---
 
 # MyMultiTenant: Sub-Tenant Dedicated Role & Record Processing Skill
@@ -235,6 +239,103 @@ useEffect(() => {
 
 ---
 
+### Pillar 4: Identity-Blind Single-Form Login (智能单表单登录 · Battle-Tested v2)
+
+Goal: staff (Tier 3) must never discover that an admin backend exists — psychological isolation at the entry, while admins keep a frictionless path. This replaces the earlier "dual-tab login" idea (tabs/badges leak the admin concept to staff).
+
+**The Pattern — one form, zero identity hints:**
+- ONE `账号 + 密码 + 立即登录` form. NO dual tabs, NO identity badges, NO "管理员/后台/管理" wording anywhere on the page. Title = store name + neutral subtitle (e.g. `欢迎登录`).
+- Identity is AUTO-DETECTED from the account format at submit:
+  - `/^[0-9]{5,20}$/` (pure digits) → **staff channel** (phone + password)
+  - otherwise → **admin channel** (username + password)
+- Both channels POST to different endpoints; the page itself stays identity-blind.
+
+**Mutual-Exclusivity Invariant (must hold, or redesign first):**
+- Admin username MUST NOT be pure digits (e.g. `admin`); staff phone MUST be digits-only, enforced at creation (DB check or regex).
+- If numeric admin usernames are ever needed, this routing breaks — redesign before shipping.
+
+**Sanitized errors per channel (never leak the other world):**
+- Staff failure: `手机号或密码错误，或该接单员已被停用（请联系店长）` — mentions only phone/店长.
+- Admin failure: neutral `账号或密码错误` — never repeats which channels exist.
+
+```tsx
+// Single smart login (frontend excerpt, battle-tested)
+const handleSmartLogin = async (e) => {
+  const account = accountInput.trim();
+  if (/^[0-9]{5,20}$/.test(account)) {
+    // staff channel (server falls back cross-tenant if page tenant param is wrong — Pillar 6)
+    const r = await fetch('/api/auth/staff-login', { method: 'POST', body: JSON.stringify({ phone: account, password, tenant: pageTenant }) });
+    const d = await r.json();
+    if (d.success) setSession({ staff: d.staff });                       // enter orders-only workbench
+  } else {
+    const r = await fetch('/api/auth/admin-login', { method: 'POST', body: JSON.stringify({ username: account, password, tenant: pageTenant }) });
+    // admin enters full console; nothing on this page ever told staff that path exists
+  }
+};
+```
+
+### Pillar 5: Login-Time Identity Scope (登录时定身份 · Master-Only Privileges)
+
+Problem: when the platform admin and branch admins share one global credential pair, the server cannot tell "who" is calling just from the URL `?tenant=` — anyone can rewrite a URL. Destructive power (delete orders, wipe data) must therefore be bound to **how/where the session was created**, not to the page being viewed.
+
+**The Pattern — identity is fixed at login time:**
+1. On admin login success the server writes an httpOnly **scope cookie**: `scope = normalize(tenant param at login)`. Logging in at `/admin` (no param) → `scope=default` (platform superadmin); at `/admin?tenant=xxx` → `scope=xxx` (branch admin).
+2. Privileged endpoints (cross-tenant DELETE, mass clear, etc.) require **double guard**: valid admin session AND `scope === 'default'`; otherwise 403.
+3. **Fail-closed**: a missing scope cookie (legacy session created before this mechanism) is denied — users simply re-login once.
+4. Switching store views in the UI never changes identity. UI privileged buttons must read the scope (returned by the auth-check endpoint), **never** the current URL tenant.
+
+```typescript
+// admin login route (server)
+const scopeTenant = normalizeTenantId(String(tenant || ''));
+response.cookies.set({ name: 'dingcan_admin_scope', value: scopeTenant, httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 3600 });
+
+// auth-check endpoint returns scope to the frontend for UI gating
+return res.json({ authenticated: true, role: 'admin', scope: rawScope || '' }); // '' = legacy, fail-closed
+
+// privileged endpoint (server) — e.g. cross-tenant order deletion
+app.delete('/api/orders/:id', async (req, res) => {
+  if (adminCookie !== TOKEN) return res.status(401).json({ error: '无管理员权限' });
+  if (scopeCookie !== 'default') return res.status(403).json({ error: '仅主租户超级管理员可删除' }); // missing scope lands here too
+  await db.deleteOrder(id, tenantId); // still scoped: WHERE id = $1 AND tenant_id = $2, transaction (items first, then order)
+});
+```
+
+### Pillar 6: Credential-First Login & Tenant Self-Healing (凭据优先 · 不依赖URL上下文)
+
+A staff member's phone + password uniquely identify them. The page's `?tenant=` is only an optimization — **never a hard dependency**. Real-world failure this fixes: an operator opens `/admin?tenant=<their phone number>` (wrong param), and the exact-match login fails even though the password is correct.
+
+**The Pattern — two-stage resolution:**
+1. Try exact match `(pageTenant, phone, password, enabled=1)` first (fast path).
+2. On miss, fall back to a **cross-tenant credential lookup** `(phone, password, enabled=1)`:
+   - exactly **1 hit** → log in with the hit's real `tenant_id` (session cookie stores the DB-true value, not the URL value);
+   - **multiple hits** → politely ask the user to open the correct store's login page (ambiguous identity);
+   - 0 hits → sanitized failure.
+3. Frontend self-healing: after staff login success, if `staff.tenant_id !== pageTenant`, rewrite URL/state to the real tenant so orders load correctly.
+4. Admin channel: validate the page tenant against the tenant registry before login; unknown/garbage param → log in as `default` and correct the URL (prevents scope pollution).
+
+```sql
+-- cross-tenant credential fallback: expect ≤ 1 row
+SELECT * FROM staff_users WHERE phone = $1 AND password = $2 AND enabled = 1;
+```
+
+### Pillar 7: Dual-Session Hygiene & Instant Revocation (双会话卫生 · 即时吊销)
+
+- **Staff login CLEARS admin cookies** (auth + scope), and vice versa — shared shop computers must never hold two identities at once.
+- **Logout clears ALL** session cookies (admin + staff + scope).
+- **Every auth check re-validates** the staff session against the DB (`enabled = 1`) — disabling or deleting an account takes effect on the very next page load, no token TTL waiting.
+
+```typescript
+// staff login success (server): wipe the admin world
+response.cookies.set({ name: 'admin_auth', value: '', maxAge: 0 });
+response.cookies.set({ name: 'admin_scope', value: '', maxAge: 0 });
+
+// every admin/check (server): silent re-verification
+const staff = await db.verifyStaffSession({ id, tenantId, phone }); // enabled = 1 or nothing
+if (!staff) return res.json({ authenticated: false });               // revoked → frontend degrades gracefully
+```
+
+---
+
 ## 3. Concrete Blueprint: Multi-Restaurant Food Ordering System
 
 Here is the exact, drop-in architecture for migrating this skill to a **Multi-Restaurant Ordering System** (多个饭店，每个饭店是一个子租户，子租户后台配置接单员角色):
@@ -455,6 +556,60 @@ app.post('/api/orders/:id/status', async (req, res) => {
 
 ---
 
+### 3.3 Hardened Auth Extensions (v2 Battle-Tested: scope privileges, credential-first fallback, handler attribution)
+
+Production refinements distilled from a live multi-restaurant ordering deployment (Next.js + PostgreSQL, row-level `tenant_id` isolation):
+
+```typescript
+// A. Smart single-form login (frontend): one form serves both channels, zero admin hints on the page
+const handleSmartLogin = async () => {
+  const account = accountInput.trim();
+  if (/^[0-9]{5,20}$/.test(account)) {
+    // staff channel — server self-heals if the page tenant param is wrong (see B)
+    const r = await fetch('/api/auth/staff-login', {
+      method: 'POST', body: JSON.stringify({ phone: account, password, tenant: pageTenant })
+    });
+    const d = await r.json();
+    if (d.success && d.staff.tenant_id !== pageTenant) {
+      history.replaceState({}, '', `/admin?tenant=${d.staff.tenant_id}`); // tenant self-healing
+    }
+  } else {
+    // admin channel — validate page tenant against registry first; garbage param → login as default
+    const known = tenants.some(t => t.id === pageTenant) ? pageTenant : 'default';
+    await fetch('/api/auth/admin-login', { method: 'POST', body: JSON.stringify({ username: account, password, tenant: known }) });
+  }
+};
+
+// B. Staff login with cross-tenant credential fallback (server)
+let staff = await db.verifyStaffLogin(pageTenant, phone, password);   // 1) exact context (fast path)
+if (!staff) {
+  const hits = await db.findStaffByCredentials(phone, password);      // 2) global (phone, password, enabled=1)
+  if (hits.length === 1) staff = hits[0];                             // unique hit wins; session uses staff.tenant_id
+  else if (hits.length > 1) {
+    return res.status(401).json({ error: '该手机号在多家门店均存在，请打开对应门店页面登录' });
+  }
+}
+// on success: clear admin cookies + scope cookie (dual-session hygiene),
+// set staff cookie (httpOnly, 30d) encoded from staff.tenant_id — never from the URL
+
+// C. Login-time scope guards master-only destructive ops (server)
+app.delete('/api/orders/:id', async (req, res) => {
+  if (adminCookie !== TOKEN) return res.status(401).json({ error: '无管理员权限' });
+  if (scopeCookie !== 'default') return res.status(403).json({ error: '仅主租户超级管理员可删除' }); // missing scope → 403 too
+  await db.deleteOrder(req.params.id, req.query.tenant); // tx: delete items first, then order; WHERE id + tenant_id
+});
+
+// D. Handler attribution: operator status changes stamp the record; admin ops never overwrite existing stamps
+await db.updateOrderStatus(id, status, tenantId, handlerNameFromStaffSession /* '' for admin ops */);
+```
+
+**Verification recipe (do all three before shipping):**
+1. **Static**: type-check changed files (`tsc --noEmit`).
+2. **DB assertion matrix** on a scratch tenant: correct login ✓ / wrong password ✗ / wrong-context login rescued by fallback ✓ / disabled account ✗ then re-enabled ✓ / privileged delete: branch scope ✗ + missing scope ✗ + master ✓ / other tenants untouched ✓ / handler stamp written ✓ and never overwritten by admin ops ✓.
+3. **UI text-leak scan**: assert the login page contains NONE of [`管理员`, `后台`, `分店`, `总店`] and renders the neutral title; assert dual-tab/badge components are fully removed (byte-level search, not eyeballing).
+
+---
+
 ## 4. Reusable Frontend Checklist
 
 When building or reviewing an application implementing the `mymultenant` skill, ensure the following checklist is completed:
@@ -471,6 +626,13 @@ When building or reviewing an application implementing the `mymultenant` skill, 
 - [ ] **Header Quick Switch**: When an operator is on the customer view, header shows a badge button (e.g. `🛠️ 张强 · 工作台`) that clears the preview flag and returns to admin on click.
 - [ ] **RBAC Clipping**: Operators (`role === 'technician'` / `order_handler`) only see their records list. Superadmin tabs (tenants list, database settings, global configs) are unmounted.
 - [ ] **Excel Export**: Operators can export their tenant's records (with filter and monthly KPI summary sheets) without leaking other tenant records.
+- [ ] **Identity-Blind Entry (v2)**: Login page = ONE form (账号+密码+登录), neutral title, NO admin/backend wording anywhere, NO identity badges or tabs. Staff discovers nothing about the admin world.
+- [ ] **Smart Account Detection (v2)**: Pure-digit account → staff channel; anything else → admin channel. Admin username guaranteed non-numeric; staff phones digits-only at creation (DB/regex enforced). Invariant documented in code.
+- [ ] **Sanitized Errors (v2)**: Staff failure text never mentions admin (mentions 手机号/店长); admin failure text is neutral (账号或密码错误) and never names a channel.
+- [ ] **Login-Time Scope (v2)**: Scope cookie written at admin login (= login-page tenant, httpOnly). Master-only destructive endpoints require admin session + scope==='default'; missing scope → deny (fail-closed, re-login once). UI privileged buttons read scope from the auth-check response, never the current URL tenant.
+- [ ] **Credential-First Login (v2)**: Staff login succeeds even when the page tenant param is wrong: exact-context match first, then cross-tenant unique fallback; session/cookies store the DB-true tenant; frontend rewrites URL/state to the real tenant after login; multi-hit ambiguity asks for the correct store page.
+- [ ] **Dual-Session Hygiene (v2)**: Staff login clears admin + scope cookies (and vice versa); logout clears all; every auth check re-validates staff against DB `enabled = 1` → instant revocation on disable/delete.
+- [ ] **Handler Attribution (v2)**: Operator status changes stamp the operator's name onto the record (e.g. `orders.handler_name`); admin operations never overwrite an existing stamp.
 
 ---
 
@@ -480,3 +642,6 @@ The `mymultenant` pattern bridges the gap between pure multi-tenancy and day-to-
 1. Administrators get **full tenant control** without code deployments.
 2. Front-line operators (technicians, store workers, order handlers) get **instant zero-friction access** directly to what matters to them without dealing with global platform complexity.
 3. End-users get a **fast, clean tenant-branded experience**.
+4. **Identity stays invisible**: staff enter through an identity-blind single form (v2, battle-tested) and never learn an admin backend exists; the platform superadmin keeps exclusive destructive power bound to a login-time scope cookie, fail-closed against URL tampering and legacy sessions.
+
+Battle-tested in two production systems: a school equipment-repair platform (device binding + deep-linking, Pillar 3) and a multi-restaurant food-ordering SaaS (single-form smart login, scope-guarded deletion, credential-first fallback, handler attribution — Pillars 4-7, section 3.3).
