@@ -5,7 +5,7 @@ WORKDIR /app
 # 复制依赖声明文件1
 COPY package*.json ./
 
-# 安装依赖
+# 安装依赖1
 RUN npm install
 
 # 复制所有项目源文件
