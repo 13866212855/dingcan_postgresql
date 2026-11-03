@@ -18,6 +18,18 @@ export async function GET(
     if (!order) {
       return NextResponse.json({ success: false, error: '未找到该订单' }, { status: 404 });
     }
+
+    // 接单员数据隔离：如果请求者是接单员，且该订单已被其他接单员处理，则无权查看
+    const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
+    if (staffPayload && staffPayload.tenantId === tenantId) {
+      if (order.status !== '待处理' && order.handler_phone && order.handler_phone !== staffPayload.phone) {
+        return NextResponse.json(
+          { success: false, error: '该订单已由其他接单员处理，您无权查看此订单' },
+          { status: 403 }
+        );
+      }
+    }
+
     return NextResponse.json({ success: true, data: order, tenantId });
   } catch (error: any) {
     return NextResponse.json(
@@ -37,6 +49,20 @@ export async function PATCH(
     const body = await req.json();
     const { status, paymentStatus } = body;
 
+    // 若操作者为本租户接单员（staff会话），记录处理人信息并校验接单互斥排他性
+    let staffInfo: { id: number; name: string; phone: string } | null = null;
+    const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
+    if (staffPayload && staffPayload.tenantId === tenantId) {
+      try {
+        const staff = await verifyStaffSession(staffPayload);
+        if (staff) {
+          staffInfo = { id: staff.id, name: staff.name, phone: staff.phone };
+        }
+      } catch {
+        // 校验异常按非 staff 处理
+      }
+    }
+
     if (status) {
       const validStatuses = ['待处理', '制作中', '已完成', '已取消'];
       if (!validStatuses.includes(status)) {
@@ -46,19 +72,13 @@ export async function PATCH(
         );
       }
 
-      // 若操作者为本租户接单员（staff会话），将处理人姓名写入订单留痕
-      let handlerName = '';
-      const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
-      if (staffPayload && staffPayload.tenantId === tenantId) {
-        try {
-          const staff = await verifyStaffSession(staffPayload);
-          if (staff) handlerName = staff.name;
-        } catch {
-          // 校验异常时按匿名处理，不阻断订单流转
-        }
+      const res = await updateOrderStatus(id, status, tenantId, staffInfo);
+      if (!res.success) {
+        return NextResponse.json(
+          { success: false, error: res.error || '更新订单状态失败' },
+          { status: 409 }
+        );
       }
-
-      await updateOrderStatus(id, status, tenantId, handlerName);
     }
 
     if (paymentStatus) {
@@ -69,6 +89,23 @@ export async function PATCH(
           { status: 400 }
         );
       }
+
+      // 接单员只能更新本人已认领或公共待处理订单的支付状态
+      if (staffInfo) {
+        const orderBefore = await getOrderById(id, tenantId);
+        if (
+          orderBefore &&
+          orderBefore.status !== '待处理' &&
+          orderBefore.handler_phone &&
+          orderBefore.handler_phone !== staffInfo.phone
+        ) {
+          return NextResponse.json(
+            { success: false, error: '该订单已由其他接单员处理，您无权更改其收款状态' },
+            { status: 403 }
+          );
+        }
+      }
+
       await updateOrderPayment(id, paymentStatus, tenantId);
 
       // 当更新为“已支付”状态时（客户在订单详情页面完成扫码支付），自动异步发送详单邮件到 527194933@qq.com

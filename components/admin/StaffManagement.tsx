@@ -59,8 +59,32 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
   }, [tenantId]);
 
   useEffect(() => {
-    fetchStaff();
-  }, [fetchStaff]);
+    let ignore = false;
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/admin/staff?tenant=${encodeURIComponent(tenantId)}`, {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!ignore) {
+          if (data.success && Array.isArray(data.data)) {
+            setStaffList(data.data);
+          } else {
+            setError(data.error || '获取接单员列表失败');
+          }
+        }
+      } catch (e: any) {
+        if (!ignore) setError('加载失败: ' + (e?.message || ''));
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
+  }, [tenantId]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();

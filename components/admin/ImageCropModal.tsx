@@ -60,20 +60,27 @@ export default function ImageCropModal({
     if (!isOpen) return;
 
     let url = '';
+    let isMounted = true;
     if (imageFile) {
       url = URL.createObjectURL(imageFile);
-      setImgSrc(url);
     } else if (imageUrl) {
-      setImgSrc(imageUrl);
+      url = imageUrl;
     }
 
-    // Reset controls
-    setZoom(1);
-    setRotation(0);
-    setOffset({ x: 0, y: 0 });
-    setAspectRatio('4:3');
+    if (url) {
+      Promise.resolve().then(() => {
+        if (isMounted) {
+          setImgSrc(url);
+          setZoom(1);
+          setRotation(0);
+          setOffset({ x: 0, y: 0 });
+          setAspectRatio('4:3');
+        }
+      });
+    }
 
     return () => {
+      isMounted = false;
       if (url && imageFile) {
         URL.revokeObjectURL(url);
       }

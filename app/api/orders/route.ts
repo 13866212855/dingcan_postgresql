@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllOrders, createOrder, getOrderById, getSettings } from '@/lib/db';
+import { getAllOrders, createOrder, getOrderById, getSettings, verifyStaffSession } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +13,21 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status') || undefined;
     const search = searchParams.get('search') || undefined;
 
-    const orders = await getAllOrders(status, search, tenantId);
+    // 识别当前请求是否来自本租户接单员（staff会话），执行多接单员数据隔离
+    let staffUser: { id: number; phone: string } | null = null;
+    const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
+    if (staffPayload && staffPayload.tenantId === tenantId) {
+      try {
+        const staff = await verifyStaffSession(staffPayload);
+        if (staff) {
+          staffUser = { id: staff.id, phone: staff.phone };
+        }
+      } catch {
+        // 校验异常不阻断
+      }
+    }
+
+    const orders = await getAllOrders(status, search, tenantId, staffUser);
     return NextResponse.json(
       { success: true, data: orders, tenantId },
       {

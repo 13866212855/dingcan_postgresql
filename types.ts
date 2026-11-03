@@ -53,6 +53,8 @@ export interface Order {
   final_amount: number;
   status: '待处理' | '制作中' | '已完成' | '已取消';
   handler_name?: string; // 处理该订单的接单员姓名（staff 处理留痕）
+  handler_phone?: string; // 处理该订单的接单员手机号（用于多接单员数据隔离）
+  handler_id?: number; // 处理该订单的接单员ID
   notes: string;
   user_id?: string;
   created_at: string;

@@ -432,6 +432,8 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE dishes ADD COLUMN IF NOT EXISTS taste_options TEXT NOT NULL DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_name TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_phone TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_id INTEGER;
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1714,12 +1716,22 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
 export async function getAllOrders(
   filterStatus?: string,
   search?: string,
-  tenantId = 'default'
+  tenantId = 'default',
+  staffUser?: { id?: number; phone?: string } | null
 ): Promise<Order[]> {
   const pool = await ensureDatabase();
   let sql = 'SELECT * FROM orders WHERE tenant_id = $1';
   const params: any[] = [tenantId];
   let paramIdx = 2;
+
+  // 接单员数据隔离：
+  // 面对配置了多个接单员的租户，所有接单员均可实时查看【待处理】公共新订单并触发声音/语音提醒；
+  // 只要有其中一个接单员接单处理了该订单，其他接单员立即不再显示该订单（包括后续制作中、已完成、已取消等）；
+  // 实现了多接单员工作流的完全数据隔离与专人负责制。管理员（非 staff）保持查看该租户全量订单
+  if (staffUser?.phone) {
+    sql += ` AND (status = '待处理' OR handler_phone = $${paramIdx++})`;
+    params.push(staffUser.phone);
+  }
 
   if (filterStatus && filterStatus !== '全部') {
     sql += ` AND status = $${paramIdx++}`;
@@ -1788,26 +1800,75 @@ export async function updateOrderStatus(
   id: string,
   status: '待处理' | '制作中' | '已完成' | '已取消',
   tenantId?: string,
-  handlerName?: string
-): Promise<boolean> {
+  staffInfo?: { id?: number; name?: string; phone?: string } | null | string
+): Promise<{ success: boolean; error?: string }> {
   const pool = await ensureDatabase();
   const order = await getOrderById(id, tenantId);
-  if (!order) return false;
+  if (!order) return { success: false, error: '未找到该订单' };
 
   const currentTenant = order.tenant_id || tenantId || 'default';
   const nowIso = new Date().toISOString();
-  // 接单员（staff）处理订单时记录处理人姓名；管理员操作不覆盖已有记录
-  if (handlerName && handlerName.trim()) {
-    await pool.query(
-      'UPDATE orders SET status = $1, updated_at = $2, handler_name = $3 WHERE id = $4',
-      [status, nowIso, handlerName.trim(), id]
+
+  let handlerName = '';
+  let handlerPhone = '';
+  let handlerId: number | null = null;
+  let isStaff = false;
+
+  if (typeof staffInfo === 'string') {
+    handlerName = staffInfo.trim();
+  } else if (staffInfo && typeof staffInfo === 'object') {
+    handlerName = (staffInfo.name || '').trim();
+    handlerPhone = (staffInfo.phone || '').trim();
+    handlerId = staffInfo.id || null;
+    isStaff = true;
+  }
+
+  if (isStaff && handlerPhone) {
+    // 竞态排他校验：接单员只允许处理公共【待处理】订单（认领并流转），或继续处理本人已接单的订单
+    if (order.handler_phone && order.handler_phone !== handlerPhone) {
+      return {
+        success: false,
+        error: `手慢了！该订单已被接单员【${order.handler_name || '其他同事'}】接单处理，您无法处理同一订单。`,
+      };
+    }
+    if (order.status !== '待处理' && order.handler_phone !== handlerPhone) {
+      return {
+        success: false,
+        error: `该订单已由其他接单员处理（当前状态：${order.status}），您无法处理。`,
+      };
+    }
+
+    // 数据库级原子抢单与状态流转更新：
+    // WHERE 条件强制保障只有待处理或者本人已经认领的记录才能被修改
+    const updateRes = await pool.query(
+      `UPDATE orders
+       SET status = $1, updated_at = $2, handler_name = $3, handler_phone = $4, handler_id = $5
+       WHERE id = $6 AND tenant_id = $7
+         AND (status = '待处理' OR handler_phone = $4)
+       RETURNING id`,
+      [status, nowIso, handlerName, handlerPhone, handlerId, id, currentTenant]
     );
+
+    if (updateRes.rows.length === 0) {
+      const latest = await getOrderById(id, tenantId);
+      return {
+        success: false,
+        error: `手慢了！该订单刚被接单员【${latest?.handler_name || '其他同事'}】抢先接单处理。`,
+      };
+    }
   } else {
-    await pool.query('UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3', [
-      status,
-      nowIso,
-      id,
-    ]);
+    // 管理员操作：保留最高监管处置权
+    if (handlerName) {
+      await pool.query(
+        'UPDATE orders SET status = $1, updated_at = $2, handler_name = $3 WHERE id = $4 AND tenant_id = $5',
+        [status, nowIso, handlerName, id, currentTenant]
+      );
+    } else {
+      await pool.query(
+        'UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3 AND tenant_id = $4',
+        [status, nowIso, id, currentTenant]
+      );
+    }
   }
 
   if (status === '已完成' || status === '已取消') {
@@ -1837,7 +1898,7 @@ export async function updateOrderStatus(
     }
   }
 
-  return true;
+  return { success: true };
 }
 
 export async function updateOrderPayment(

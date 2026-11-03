@@ -335,9 +335,9 @@ export default function AdminPage() {
         if (data.success && Array.isArray(data.data)) {
           const fetchedOrders: Order[] = data.data;
 
-          // Detect newly submitted orders
+          // Detect newly submitted orders (仅针对待处理公共新订单触发蜂鸣与语音播报)
           if (knownOrderIdsRef.current.size > 0) {
-            const brandNew = fetchedOrders.filter((o) => !knownOrderIdsRef.current.has(o.id));
+            const brandNew = fetchedOrders.filter((o) => !knownOrderIdsRef.current.has(o.id) && o.status === '待处理');
             if (brandNew.length > 0) {
               const first = brandNew[0];
               const detail = first.table_no
@@ -537,7 +537,7 @@ export default function AdminPage() {
     }
   };
 
-  // Update Order Status
+  // Update Order Status (支持并发抢单冲突提示与自动同步刷新)
   const handleUpdateOrderStatus = async (
     orderId: string,
     newStatus: '待处理' | '制作中' | '已完成' | '已取消'
@@ -557,9 +557,16 @@ export default function AdminPage() {
             status: newStatus,
           });
         }
+      } else {
+        alert(data.error || '更新订单状态失败');
+        fetchOrders(true);
+        if (selectedOrderDetail && selectedOrderDetail.id === orderId) {
+          setSelectedOrderDetail(null);
+        }
       }
-    } catch (err) {
-      console.error('Failed to update status:', err);
+    } catch (err: any) {
+      alert('操作失败: ' + (err?.message || '网络连接异常'));
+      fetchOrders(true);
     }
   };
 
@@ -581,9 +588,13 @@ export default function AdminPage() {
             payment_status: newStatus,
           });
         }
+      } else {
+        alert(data.error || '切换收款状态失败');
+        fetchOrders(true);
       }
-    } catch (err) {
-      console.error('Failed to toggle payment status:', err);
+    } catch (err: any) {
+      alert('收款状态更新失败: ' + (err?.message || '网络连接异常'));
+      fetchOrders(true);
     }
   };
 
@@ -1893,6 +1904,16 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+
+              {selectedOrderDetail.handler_name && (
+                <div className="p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200 text-indigo-900 flex items-center justify-between text-xs">
+                  <span className="font-semibold text-neutral-600">接单处理人：</span>
+                  <span className="font-bold text-indigo-700">
+                    {selectedOrderDetail.handler_name}
+                    {selectedOrderDetail.handler_phone ? ` (${selectedOrderDetail.handler_phone})` : ''}
+                  </span>
+                </div>
+              )}
 
               {selectedOrderDetail.order_type === '外卖' && (
                 <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 space-y-1">
