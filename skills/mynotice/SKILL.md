@@ -51,6 +51,24 @@ description: >
 let audioContext: AudioContext | null = null;
 let isAudioUnlocked = false;
 
+// 防止 Chromium V8 垃圾回收提前清理正在朗读的 Utterance 导致语音中断或静音
+const activeUtterances = new Set<SpeechSynthesisUtterance>();
+
+// 预加载并缓存浏览器语音库
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  try {
+    window.speechSynthesis.onvoiceschanged = () => {
+      try {
+        window.speechSynthesis.getVoices();
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * 获取全局单例 AudioContext，安全兼容移动端与 WebKit 前缀
  */
@@ -80,9 +98,7 @@ export function isAudioReady(): boolean {
 export function unlockAudio(): void {
   if (typeof window === 'undefined') return;
   const ctx = getAudioContext();
-  if (!ctx) return;
-
-  if (ctx.state === 'suspended') {
+  if (ctx && ctx.state === 'suspended') {
     ctx
       .resume()
       .then(() => {
@@ -93,40 +109,58 @@ export function unlockAudio(): void {
     isAudioUnlocked = true;
   }
 
-  // 播放单样本空缓冲满足 WebKit 权限激活
+  // 播放 1 个采样点的静音 Buffer 突破 iOS WebKit / 移动端浏览器的自动播放策略
   try {
-    const buffer = ctx.createBuffer(1, 1, 22050);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    source.start(0);
+    if (ctx) {
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+    }
   } catch {
-    // 忽略异常
+    // ignore
+  }
+
+  // 唤醒 SpeechSynthesis 引擎（避免挂起）
+  if ('speechSynthesis' in window && window.speechSynthesis.paused) {
+    try {
+      window.speechSynthesis.resume();
+    } catch {
+      // ignore
+    }
   }
 }
 
 /**
  * 纯算法动态合成清脆的商户到单/通知和弦提示音 (类似美团/微信到单音效)
+ * 关键坑点修复：必须在调度音节前 await ctx.resume()，确保音频时钟处于活跃运行态
  * 音阶组合: C5 (523Hz) -> E5 (659Hz) -> G5 (784Hz) -> C6 (1046Hz) -> E6 (1318Hz)
  */
-export function playOrderChime(): void {
+export async function playOrderChime(): Promise<void> {
   if (typeof window === 'undefined') return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
+  // 确保音频上下文在播放前已处于 running 状态，避免在 suspended 状态下写入时间戳导致音节丢失
   if (ctx.state === 'suspended') {
-    ctx.resume().catch(() => {});
+    try {
+      await ctx.resume();
+      isAudioUnlocked = true;
+    } catch {
+      // ignore
+    }
   }
 
   try {
     const now = ctx.currentTime;
 
     const notes = [
-      { freq: 523.25, time: 0, dur: 0.18, gain: 0.5 },
-      { freq: 659.25, time: 0.12, dur: 0.18, gain: 0.55 },
-      { freq: 783.99, time: 0.24, dur: 0.18, gain: 0.6 },
-      { freq: 1046.5, time: 0.36, dur: 0.45, gain: 0.7 },
-      { freq: 1318.51, time: 0.55, dur: 0.4, gain: 0.55 },
+      { freq: 523.25, time: 0, dur: 0.18, gain: 0.65 },
+      { freq: 659.25, time: 0.12, dur: 0.18, gain: 0.7 },
+      { freq: 783.99, time: 0.24, dur: 0.18, gain: 0.75 },
+      { freq: 1046.5, time: 0.36, dur: 0.45, gain: 0.85 },
+      { freq: 1318.51, time: 0.55, dur: 0.45, gain: 0.75 },
     ];
 
     notes.forEach((n) => {
@@ -153,26 +187,49 @@ export function playOrderChime(): void {
 
 /**
  * 原生中文语音合成 (TTS 朗读)
- * @param text 需要朗读的中文文本
+ * 关键坑点修复：
+ * 1. 挂入全局 activeUtterances Set，防止 Chromium V8 垃圾回收提前清理导致中断
+ * 2. 多重普通话声音兼容兜底匹配
  */
 export function speakChineseText(text: string = '您有新的订单，请及时处理！'): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   try {
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
     // 关键：先取消任何正在排队或卡住的陈旧发音，防止长队列堆积与延迟发声
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'zh-CN';
-    utterance.rate = 1.05; // 稍快的商用语速，利落干脆
-    utterance.pitch = 1.1; // 略微提亮音调，穿透力更佳
+    utterance.rate = 1.0;  // 最佳商用语速
+    utterance.pitch = 1.05; // 略微提亮音调，穿透力更佳
     utterance.volume = 1.0;
 
-    // 优先选择最佳中文女声/标准声（若设备支持）
-    const voices = window.speechSynthesis.getVoices();
-    const zhVoice = voices.find((v) => v.lang === 'zh-CN' || v.lang.includes('zh') || v.lang.includes('cmn'));
-    if (zhVoice) {
-      utterance.voice = zhVoice;
+    // 智能选择最优质的普通话中文语音（兼容多操作系统与浏览器）
+    try {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const zhVoice =
+          voices.find((v) => v.lang === 'zh-CN' || v.lang === 'zh_CN') ||
+          voices.find((v) => v.lang.startsWith('zh') || v.lang.includes('cmn')) ||
+          voices.find((v) => v.name.includes('Chinese') || v.name.includes('普通话'));
+        if (zhVoice) {
+          utterance.voice = zhVoice;
+        }
+      }
+    } catch {
+      // ignore
     }
+
+    // 防止 V8 垃圾回收中断正在播报的语音
+    activeUtterances.add(utterance);
+    utterance.onend = () => {
+      activeUtterances.delete(utterance);
+    };
+    utterance.onerror = () => {
+      activeUtterances.delete(utterance);
+    };
 
     window.speechSynthesis.speak(utterance);
   } catch (err) {
@@ -195,17 +252,17 @@ export function triggerVibration(): void {
 
 /**
  * 完整到单提醒组合拳：
- * 步骤 1: 立即解锁与播放悦耳双和弦
+ * 步骤 1: 立即激活音频并播放悦耳五音连和弦
  * 步骤 2: 触发硬件震动
- * 步骤 3: 延时 400ms 自然衔接中文语音播报
+ * 步骤 3: 延时 450ms 自然衔接中文语音播报
  *
  * @param count 新单数量
  * @param detail 动态细节 (例如: "3号桌", "外卖客户张先生")
  * @param customPrefix 自定义前缀 (默认: "您有新的订餐订单")
  */
-export function alertNotification(count: number = 1, detail?: string, customPrefix: string = '您有新的订单'): void {
+export async function alertNotification(count: number = 1, detail?: string, customPrefix: string = '您有新的订单'): Promise<void> {
   unlockAudio();
-  playOrderChime();
+  await playOrderChime();
   triggerVibration();
 
   let msg = '';
@@ -217,10 +274,10 @@ export function alertNotification(count: number = 1, detail?: string, customPref
     msg = `${customPrefix}，请及时处理`;
   }
 
-  // 延迟 400 毫秒，等和弦提示音收尾后再开启动态语音，听感极其自然高级
+  // 延迟 450 毫秒，等和弦提示音收尾后再开启动态语音，听感极其自然高级
   setTimeout(() => {
     speakChineseText(msg);
-  }, 400);
+  }, 450);
 }
 ```
 
@@ -419,23 +476,56 @@ export function SoundNoticeToggle() {
 
 ---
 
-## 7. 常见坑点与排查
+## 7. 常见核心坑点与排查（实战经验总结）
 
-1. **为什么手机处于“静音/震动档”时不响？**  
-   - iOS iPhone 侧面的物理静音拨片拨到静音时，Safari 会阻断扬声器输出。建议提醒商户“在接单工作台平板/手机上关闭物理静音”。
-2. **为什么在后台切换到其他 Tab 标签页后播报变慢或停止？**  
-   - 浏览器对非活动后台标签页（Background Tab）的 `setInterval` 会节流降频至 1 分钟甚至冻结。  
-   - **优化方案**：配合 Web Worker、或改用长连接 WebSocket / SSE，或在店员工作台将后台窗口设为独立前台窗口显示。
-3. **语音语速过快或过慢如何调？**  
-   - 在 `utterance.rate` 中调节数值（`0.8` 沉稳从容，`1.0` 正常，`1.15` 紧凑利落）。
+在各种现代前端、移动端、多租户以及容器化部署环境中，声音播报与邮件通知极易踩中深层坑点。以下为本技能沉淀的 7 大致命坑点与完美规避方案：
+
+### 坑点一：`AudioContext` 在 `suspended` 挂起状态下写音轨导致提示音丢失或静音
+- **症状**：点击测试有声音，但后台收到新单时却无声音或只有轻微杂音。
+- **原因**：现代浏览器即便解锁过，在长时间无手势交互后，`audioContext.state` 仍会自动回退为 `'suspended'`。若直接通过 `setValueAtTime(freq, ctx.currentTime + offset)` 向挂起的上下文追加振荡器，时间戳与时钟发生错位，导致音节不被渲染。
+- **终极解法**：在 `playOrderChime()` 内部，必须先 `if (ctx.state === 'suspended') await ctx.resume();` 确认上下文已恢复运行态，再调度振荡器节点。
+
+### 坑点二：Chromium / Blink 浏览器的垃圾回收（V8 GC）提前回收 `SpeechSynthesisUtterance`
+- **症状**：中文语音有时念到一半（如“您有新的...”）突然戛然而止，或者偶尔彻底不发声，但控制台无报错。
+- **原因**：Chromium 的 V8 引擎会将局部变量 `const utterance = new SpeechSynthesisUtterance(text)` 视为可回收对象，若语音在播放过程中触发了 GC，底层 C++ 音频渲染通道被强制销毁。
+- **终极解法**：建立全局单例 `Set<SpeechSynthesisUtterance>`，在 `utterance` 创建后执行 `activeUtterances.add(utterance)` 保持强引用，并在 `onend` 与 `onerror` 回调中将其从 Set 中移除。
+
+### 坑点三：浏览器自动播放限制 (Autoplay Policy) 突破
+- **症状**：初次打开后台或无点击时报错 `The AudioContext was not allowed to start`。
+- **解法**：
+  1. 监听全局首次 `click` / `touchstart` / `keydown` 并触发 `unlockAudio()`；
+  2. 解锁时向音轨播放 1 个采样点的极短静音 Buffer（兼容 iOS WebKit 特殊限制）；
+  3. 顶栏提供明确的【声音提示：已开启】切换/测试按钮，引导用户交互授权。
+
+### 坑点四：`SpeechSynthesis` 假死与多操作系统中文语音包缺失
+- **症状**：部分 Windows / Android 设备播报静音或发英文字音。
+- **解法**：
+  1. 播放前先 `window.speechSynthesis.cancel()` 清空排队阻塞任务，若 `window.speechSynthesis.paused` 为真则调用 `resume()` 唤醒引擎；
+  2. 智能筛选语音库：优先匹配 `zh-CN`、`zh_CN`、`cmn`、`Chinese` 或包含 `普通话` 的 voice 资源。
+
+### 坑点五：初次加载与基线集合 (Baseline)
+- **症状**：刷新管理后台时，突然把历史库里所有的待处理旧订单连续播报多遍。
+- **解法**：在后台轮询 Hook 中设置 `isBaselineLoadedRef`，首次拉取仅将现有订单 ID 全量存入 `knownOrderIdsRef`（静默建基线），后续拉取才通过 `brandNew = current.filter(o => !known.has(o.id))` 进行差量捕获。
+
+### 坑点六：多接单员并发接单的数据隔离与防重复影响
+- **症状**：配置多个接单员时，一个接单员接了单，其他接单员还在反复提示该单。
+- **解法**：接单员认领订单后，订单状态由“待处理”转为“制作中”，并记录认领人手机号。其他接单员仅查询公共“待处理”以及“本人名下”订单，已被他人接单的记录自动不再对其他接单员展现与播报。
+
+### 坑点七（极重要）：容器化与 Serverless (Docker, Cloud Run, Next.js App Router) 的 CPU 冻结导致邮件发信腰斩
+- **症状**：测试邮件能发成功，但在实际客户提交订单或触发声音播报时，QQ 邮箱却没有收到详单。
+- **原因**：开发者往往习惯写 `(async () => { await sendMail(...) })()` 以为是不阻塞主线程的异步派发。然而在 Next.js App Router 或 Cloud Run/Serverless 容器环境中，一旦返回了 `NextResponse.json(...)`，HTTP 连接被关闭，容器的 CPU 调度立即被宿主暂停（Freeze）！连接 `smtp.qq.com:465` 并完成 SSL 握手通常耗时 0.5s~1s，进程在握手中途被休眠冻结，邮件根本未送出！
+- **终极解法**：
+  1. **主路径安全时限 Await**：在 API 路由中采用 `await Promise.race([sendMail(...), timeout(3500)])`，最多等待 3.5 秒即可保证 SSL 握手与邮件发送完成，既不超时也不被宿主挂起；
+  2. **双通道声信协同 (Dual-Dispatch)**：后台工作台在听到提示音、检测到新订单时，同步触发 `/api/orders/[id]/notify-email` 发送邮件，构成“下单触发 + 声音协同”双保险；
+  3. **60 秒内存防重 (Deduplication Cache)**：`lib/email.ts` 内部基于 `tenantId + orderId + paymentStatus` 缓存 60 秒内发送时间戳，双通道或多次轮询自动去重，杜绝重复轰炸。
 
 ---
 
 ## 8. “声信协同”邮件实时详单同步通知体系
 
 在商用实战场景中，仅靠浏览器端的声音播报存在局限：如果店员离开了电脑屏幕、电脑合盖锁屏、或处于嘈杂厨房，可能会错过声音。  
-因此，**mynotice 技能升级支持“声信协同”多通道机制**：
-> **当后台触发声音与中文语音播报的同时，服务端自动异步向指定邮箱（如 `527194933@qq.com`）投递一份格式工整、图文并茂的客户订单业务详单。**
+因此，**mynotice 技能支持“声信协同”多通道机制**：
+> **当后台触发声音与中文语音播报的同时，服务端自动向指定邮箱（如 `527194933@qq.com`）投递一份格式工整、图文并茂的客户订单业务详单。**
 
 这样店长手机上绑定的 QQ 邮箱 / 微信邮件提醒会立刻弹窗，即使店员离店或手机息屏，也能做到**双保险、全天候零漏单**。
 
@@ -448,7 +538,7 @@ export function SoundNoticeToggle() {
 | 环境变量参数 | 示例推荐值 | QQ 邮箱官方协议对应说明 |
 | :--- | :--- | :--- |
 | **`SMTP_HOST`** | `smtp.qq.com` | 发送邮件服务器主机地址 |
-| **`SMTP_PORT`** | `465` | SSL 加密端口（官方推荐 465 或 587） |
+| **`SMTP_PORT`** | `465` | SSL 加密端口（官方推荐 465） |
 | **`SMTP_SECURE`** | `true` | 是否启用 SSL 安全传输层加密 |
 | **`SMTP_USER`** | `527194933@qq.com` | 完整发信账号（用户名/邮箱地址） |
 | **`SMTP_PASS`** | `rvlehugdnsmccajh` | 邮箱安全中心生成的专属 16 位客户端授权码 |
@@ -469,7 +559,7 @@ NOTIFY_EMAIL_TO=527194933@qq.com
 
 ### 8.2 核心发信模块与详单模板 (`lib/email.ts`)
 
-采用 `nodemailer` 单例连接池，并针对国内移动端邮件客户端（QQ 邮箱 APP、微信邮件提醒、Foxmail、iPhone 邮件）进行纯内联 CSS 渲染，确保在所有终端均排版整洁。
+包含 60 秒内存防重复发信缓存（`sentOrderEmailTimestamps`）：
 
 ```typescript
 // lib/email.ts
@@ -493,33 +583,25 @@ export function getTransporter(): Transporter {
   return transporterInstance;
 }
 
-/**
- * 格式化东八区（北京时间）
- */
-function formatBeijingTime(dateInput: string | Date = new Date()): string {
-  const d = new Date(dateInput);
-  return d.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
+// 内存防重复发信缓存（60秒内同一单号同一状态不重复发送，杜绝并发轰炸）
+const sentOrderEmailTimestamps = new Map<string, number>();
 
-/**
- * 后台触发声音播报时，同步发送客户订单详单邮件
- */
 export async function sendOrderPaymentEmail(
   order: Order,
   options?: {
     restaurantName?: string;
     noteTrigger?: string;
+    force?: boolean;
   }
 ) {
+  const cacheKey = `${order.tenant_id || 'default'}_${order.id}_${order.payment_status}`;
+  const now = Date.now();
+  const lastSent = sentOrderEmailTimestamps.get(cacheKey);
+
+  if (!options?.force && lastSent && now - lastSent < 60000) {
+    return { success: true, messageId: 'cached_dedup' };
+  }
+
   const userEmail = process.env.SMTP_USER || '527194933@qq.com';
   const targetEmail = process.env.NOTIFY_EMAIL_TO || '527194933@qq.com';
   const shopName = options?.restaurantName || '饭店点餐系统';
@@ -530,135 +612,116 @@ export async function sendOrderPaymentEmail(
   const isPaid = order.payment_status === '已支付';
   const finalPrice = Number(order.final_amount ?? order.total_amount).toFixed(2);
 
-  // 1. 动态自适应邮件主题
   const subjectPrefix = isPaid ? '【新订单已支付】' : '【新点餐提醒】';
   const subject = `${subjectPrefix}${locationTitle} - 订单号: ${order.id} (${isPaid ? '实付' : '待收'}: ¥${finalPrice})`;
 
-  // 2. 状态胶囊与卡片
-  const statusBadge = isPaid
-    ? `<span style="display:inline-block;background:#10b981;color:#fff;font-size:11px;font-weight:bold;padding:3px 8px;border-radius:6px;">✔ 新订单已支付</span>`
-    : `<span style="display:inline-block;background:#f59e0b;color:#fff;font-size:11px;font-weight:bold;padding:3px 8px;border-radius:6px;">⏳ 新订单待结账</span>`;
-
-  // 3. 菜品表格行与口味标签
-  const itemsHtml = (order.items || []).map((item, idx) => `
-    <tr style="border-bottom: 1px solid #f1f5f9;">
-      <td style="padding: 10px 8px; font-size: 13px; text-align: center; color: #64748b;">${idx + 1}</td>
-      <td style="padding: 10px 8px; font-size: 13px; font-weight: 600; color: #0f172a;">
-        ${item.dish_name}
-        ${item.taste ? `<div style="margin-top:2px;padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;display:inline-block;">定制: ${item.taste}</div>` : ''}
-      </td>
-      <td style="padding: 10px 8px; font-size: 13px; text-align: right; color: #64748b;">¥${Number(item.price).toFixed(2)}</td>
-      <td style="padding: 10px 8px; font-size: 13px; text-align: center; font-weight: bold;">×${item.quantity}</td>
-      <td style="padding: 10px 8px; font-size: 13px; text-align: right; font-weight: bold; color: #e11d48;">¥${Number(item.subtotal || item.price * item.quantity).toFixed(2)}</td>
-    </tr>
-  `).join('');
-
-  const html = `
-  <!DOCTYPE html>
-  <html lang="zh-CN">
-  <head><meta charset="utf-8"><title>${subject}</title></head>
-  <body style="margin: 0; padding: 20px; background-color: #f1f5f9; font-family: -apple-system, sans-serif;">
-    <div style="max-width: 600px; margin: 0 auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06);">
-      <div style="background: #0f172a; padding: 20px 24px; color: #fff;">
-        ${statusBadge}
-        <h2 style="margin: 8px 0 4px 0; font-size: 18px;">${shopName} · ${isPaid ? '客户支付详单' : '新点餐备餐详单'}</h2>
-        <div style="font-size: 12px; color: #94a3b8;">${triggerDesc} · 时间：${formatBeijingTime()}</div>
-      </div>
-      <div style="padding: 24px;">
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 13px;">
-          <div><strong>就餐方式：</strong> ${isDineIn ? `堂食 (${order.table_no})` : `外卖配送 (${order.delivery_contact} / ${order.delivery_phone})`}</div>
-          ${order.delivery_address ? `<div style="margin-top:4px;"><strong>送餐地址：</strong> <span style="color:#b91c1c;font-weight:bold;">${order.delivery_address}</span></div>` : ''}
-          ${order.notes ? `<div style="margin-top:6px;color:#b45309;"><strong>顾客备注：</strong> ${order.notes}</div>` : ''}
-        </div>
-        <table width="100%" style="border-collapse: collapse; margin-bottom: 16px;">
-          <thead>
-            <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
-              <th style="padding: 8px; text-align: center;">#</th>
-              <th style="padding: 8px; text-align: left;">菜品名称</th>
-              <th style="padding: 8px; text-align: right;">单价</th>
-              <th style="padding: 8px; text-align: center;">数量</th>
-              <th style="padding: 8px; text-align: right;">小计</th>
-            </tr>
-          </thead>
-          <tbody>${itemsHtml}</tbody>
-        </table>
-        <div style="text-align: right; border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 14px;">
-          实收金额：<span style="font-size: 20px; font-weight: 800; color: #e11d48;">¥${finalPrice}</span>
-        </div>
-      </div>
-    </div>
-  </body>
-  </html>
-  `;
-
-  return getTransporter().sendMail({
+  // 生成 HTML 详单排版并发送
+  const transporter = getTransporter();
+  const info = await transporter.sendMail({
     from: `"${shopName}通知" <${userEmail}>`,
     to: targetEmail,
     subject,
-    html,
+    html: `<!-- 详细详单排版 HTML -->`,
   });
+
+  sentOrderEmailTimestamps.set(cacheKey, now);
+  return { success: true, messageId: info.messageId };
 }
 ```
 
 ---
 
-### 8.3 “声信协同”双通道触发架构
+### 8.3 “声信协同”双通道触发架构 (Dual-Dispatch Architecture)
 
-为了保证顾客端操作毫秒级响应，邮件投递必须采用**异步非阻塞 (Fire-and-forget)** 模式：
+为解决 Serverless/容器环境冻结问题，并确保“只要响铃必有邮件”，系统构建了坚固的**双通道协同闭环**：
 
 ```
-顾客提交订单 / 点击扫码支付
-         │
-         ▼
-[ Next.js API: POST /api/orders ]
-         ├─ 1. 写入 Neon 数据库，返回 200 OK (顾客端即刻完成渲染，耗时 <50ms)
-         │
-         ├─ 2. 后台工作台轮询到新订单 (差量检测 brandNew.length > 0)
-         │      └─ 喇叭响起清脆和弦铃声 + 中文语音播报: "您有新的点餐订单，3号桌..."
-         │
-         └─ 3. 服务端后台异步协程并发触发:
-                └─ 调用 sendOrderPaymentEmail() 异步投递至 527194933@qq.com
-                    └─ 老板手机收到 QQ 邮箱 / 微信服务号即时弹窗，附带完整详单
+                      顾客下单 / 扫码支付
+                             │
+                             ▼
+             [ Next.js API: POST /api/orders ]
+                             │
+               ┌─────────────┴─────────────┐
+               ▼                           ▼
+        1. 写入数据库成功             2. 【通道一：主线程安全时限 Await】
+        返回 200 给客户端             Promise.race([sendOrderPaymentEmail, 3500ms])
+                                      保证在容器休眠前完成 SMTP 握手并投递
+                                           │
+                                           ▼
+                                   目标邮箱: 527194933@qq.com
+
+                             同时（前端协同）
+                             │
+                             ▼
+        [ 管理后台/接单工作台轮询到新订单 (brandNew > 0) ]
+                             │
+               ┌─────────────┴─────────────┐
+               ▼                           ▼
+        1. 响起清脆和弦铃声          2. 【通道二：工作台声信协同端点】
+        + 中文语音播报桌号与内容      调用 POST /api/orders/[id]/notify-email
+                                           │
+                                           ▼
+                                 若通道一已发，60s 去重拦截；
+                                 若通道一未发，此处兜底确保发信必达！
 ```
 
-#### 后端接口联动代码示范 (`app/api/orders/route.ts`)
+#### 通道一：后端订单接口代码 (`app/api/orders/route.ts`)
 ```typescript
-// 在订单入库后，直接启动异步任务，不 await 阻塞响应
-(async () => {
-  try {
+// 写入订单后，通过 Promise.race 确保发信在 3.5 秒内执行，杜绝容器冻结
+try {
+  const emailPromise = (async () => {
     const fullOrder = await getOrderById(order.id, tenantId);
     const settings = await getSettings(tenantId);
     if (fullOrder) {
       await sendOrderPaymentEmail(fullOrder, {
         restaurantName: settings?.restaurant_name,
-        noteTrigger: order.payment_status === '已支付'
-          ? '客户下单已扫码支付 · 后台语音同步播报'
-          : '客户提交新订单 · 后台语音同步播报',
+        noteTrigger: paymentStatus === '已支付'
+          ? '客户下单时已完成扫码支付 · 后台语音同步播报'
+          : '客户提交新订单（餐后结账）· 后台语音同步播报',
       });
     }
-  } catch (err) {
-    console.error('[Email Notice Error]', err);
-  }
-})();
+  })();
+  await Promise.race([
+    emailPromise,
+    new Promise((resolve) => setTimeout(resolve, 3500)),
+  ]);
+} catch (mailErr) {
+  console.error('[Order Notice Email Error]', mailErr);
+}
 ```
 
-#### 当顾客稍后完成扫码支付时的状态同步 (`app/api/orders/[id]/route.ts`)
+#### 通道二：工作台声音播报与邮件端点联动 (`app/admin/page.tsx`)
 ```typescript
-if (paymentStatus === '已支付') {
-  (async () => {
-    try {
-      const updated = await getOrderById(id, tenantId);
-      const settings = await getSettings(tenantId);
-      if (updated) {
-        await sendOrderPaymentEmail(updated, {
-          restaurantName: settings?.restaurant_name,
-          noteTrigger: '客户在订单详情页面完成扫码支付',
-        });
-      }
-    } catch (err) {
-      console.error('[Payment Email Notice Error]', err);
-    }
-  })();
+// 当工作台检测到新订单并触发声音告警时，同步调用邮件端点
+if (brandNew.length > 0) {
+  if (soundEnabledRef.current) {
+    alertNewOrder(brandNew.length, detail);
+  }
+
+  // 声信协同：只要响铃，必同步确保投递详单邮件
+  brandNew.forEach((newOrder) => {
+    fetch(`/api/orders/${newOrder.id}/notify-email?tenant=${encodeURIComponent(currentTenantId)}`, {
+      method: 'POST',
+    }).catch((e) => console.warn('[Admin Sound-Email Sync Notice]', e));
+  });
+}
+```
+
+#### 协同邮件端点 (`app/api/orders/[id]/notify-email/route.ts`)
+```typescript
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const tenantId = getTenantIdFromRequest(req);
+  const order = await getOrderById(id, tenantId);
+  if (!order) return NextResponse.json({ success: false, error: '未找到订单' }, { status: 404 });
+
+  const settings = await getSettings(tenantId);
+  const result = await sendOrderPaymentEmail(order, {
+    restaurantName: settings?.restaurant_name,
+    noteTrigger: '后台订单工作台提示音触发 · 同步邮件送达',
+  });
+
+  return NextResponse.json({ success: result.success });
 }
 ```
 
@@ -679,3 +742,4 @@ if (paymentStatus === '已支付') {
    ```
 2. **管理后台一键触发按钮**：
    在后台设置面板提供【发送一封测试详单邮件】按钮，管理员点击后即可在 2 秒内收到一封真实带菜品排版的模拟测试邮件，确认发信账号、授权码与目标收信无误。
+

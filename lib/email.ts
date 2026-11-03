@@ -47,16 +47,31 @@ export interface SendOrderEmailResult {
   error?: string;
 }
 
+// 内存防重复发信缓存（60秒内同一单号同一状态不重复发送，杜绝并发轰炸）
+const sentOrderEmailTimestamps = new Map<string, number>();
+
 /**
- * 客户点击“我已完成扫码支付”后，自动向指定邮箱发送详单提醒
+ * 客户点击“我已完成扫码支付”或后台新单声音播报时，自动向指定邮箱发送详单提醒
  */
 export async function sendOrderPaymentEmail(
   order: Order,
   options?: {
     restaurantName?: string;
     noteTrigger?: string;
+    force?: boolean;
   }
 ): Promise<SendOrderEmailResult> {
+  const cacheKey = `${order.tenant_id || 'default'}_${order.id}_${order.payment_status}`;
+  const now = Date.now();
+  const lastSent = sentOrderEmailTimestamps.get(cacheKey);
+
+  if (!options?.force && lastSent && now - lastSent < 60000) {
+    return {
+      success: true,
+      messageId: 'cached_dedup',
+    };
+  }
+
   const userEmail = process.env.SMTP_USER || '527194933@qq.com';
   const targetEmail = process.env.NOTIFY_EMAIL_TO || '527194933@qq.com';
   const shopName = options?.restaurantName || '饭店点餐系统';
@@ -275,6 +290,7 @@ export async function sendOrderPaymentEmail(
     });
 
     console.log(`[Email Notice] 成功向 ${targetEmail} 发送订单支付详单 (Message ID: ${info.messageId})`);
+    sentOrderEmailTimestamps.set(cacheKey, now);
     return {
       success: true,
       messageId: info.messageId,

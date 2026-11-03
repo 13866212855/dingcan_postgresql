@@ -106,9 +106,9 @@ export async function POST(req: NextRequest) {
       tenantId
     );
 
-    // 无论餐前支付还是餐后结账，后台在播放声音与语音通知的同时，自动异步向 527194933@qq.com 发送对应的订单详单邮件（零延迟且不阻塞前台点餐接口）
-    (async () => {
-      try {
+    // 声信协同：等待邮件在安全时限内（最多 3.5 秒）投递，配合 lib/email.ts 60s 去重机制，保证邮件必达且不超时
+    try {
+      const emailPromise = (async () => {
         const fullOrder = await getOrderById(order.id, tenantId);
         const settings = await getSettings(tenantId);
         if (fullOrder) {
@@ -120,10 +120,14 @@ export async function POST(req: NextRequest) {
             noteTrigger: triggerNote,
           });
         }
-      } catch (mailErr) {
-        console.error('[Order Notice Email Error]', mailErr);
-      }
-    })();
+      })();
+      await Promise.race([
+        emailPromise,
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
+    } catch (mailErr) {
+      console.error('[Order Notice Email Error]', mailErr);
+    }
 
     return NextResponse.json({
       success: true,

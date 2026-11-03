@@ -108,10 +108,10 @@ export async function PATCH(
 
       await updateOrderPayment(id, paymentStatus, tenantId);
 
-      // 当更新为“已支付”状态时（客户在订单详情页面完成扫码支付），自动异步发送详单邮件到 527194933@qq.com
+      // 当更新为“已支付”状态时（客户在订单详情页面完成扫码支付），自动发送详单邮件到 527194933@qq.com
       if (paymentStatus === '已支付') {
-        (async () => {
-          try {
+        try {
+          const emailPromise = (async () => {
             const updatedOrder = await getOrderById(id, tenantId);
             const settings = await getSettings(tenantId);
             if (updatedOrder) {
@@ -120,10 +120,14 @@ export async function PATCH(
                 noteTrigger: '客户在订单详情/结账页面点击【我已完成扫码支付】',
               });
             }
-          } catch (mailErr) {
-            console.error('[Order Payment Notice Email Error]', mailErr);
-          }
-        })();
+          })();
+          await Promise.race([
+            emailPromise,
+            new Promise((resolve) => setTimeout(resolve, 3500)),
+          ]);
+        } catch (mailErr) {
+          console.error('[Order Payment Notice Email Error]', mailErr);
+        }
       }
     }
 

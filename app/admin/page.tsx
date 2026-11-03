@@ -363,6 +363,13 @@ export default function AdminPage() {
                 alertNewOrder(brandNew.length, detail);
               }
 
+              // 声信协同（mynotice）：当工作台检测到新订单并发出提示音的同时，确保向 527194933@qq.com 投递该单详细邮件
+              brandNew.forEach((newOrder) => {
+                fetch(`/api/orders/${newOrder.id}/notify-email?tenant=${encodeURIComponent(currentTenantId)}`, {
+                  method: 'POST',
+                }).catch((e) => console.warn('[Admin Sound-Email Sync Notice]', e));
+              });
+
               const bannerText = `收到 ${brandNew.length} 笔新点餐订单！${
                 first.table_no
                   ? `【${first.table_no}】`
