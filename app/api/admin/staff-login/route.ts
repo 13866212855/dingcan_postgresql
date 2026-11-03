@@ -60,9 +60,15 @@ export async function POST(req: NextRequest) {
       maxAge: 60 * 60 * 24 * 30,
     });
 
-    // 清除管理员会话，防止公用电脑上"管理员+接单员"双身份混淆
+    // 清除管理员会话与身份范围，防止公用电脑上"管理员+接单员"双身份混淆
     response.cookies.set({
       name: 'restaurant_admin_auth',
+      value: '',
+      path: '/',
+      maxAge: 0,
+    });
+    response.cookies.set({
+      name: 'dingcan_admin_scope',
       value: '',
       path: '/',
       maxAge: 0,

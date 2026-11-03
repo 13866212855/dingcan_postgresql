@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings, verifyStaffSession } from '@/lib/db';
+import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings, verifyStaffSession, deleteOrder } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
 import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
@@ -101,6 +101,64 @@ export async function PATCH(
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: '更新订单失败: ' + (error?.message || '') },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE 彻底删除订单（主租户超级管理员专属能力）：
+ * 守卫1：必须持管理员登录会话（接单员 staff 会话直接 401）；
+ * 守卫2：会话 scope 必须为 'default'（即在总店后台 /admin 登录的超管会话）——
+ *        分店管理员（?tenant=xxx 登录）与旧版无 scope 会话一律 403 拒绝（fail-closed）。
+ * 删除范围限定在请求租户内（id + tenant_id 双条件），随订单级联删除全部明细。
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    if (req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token') {
+      return NextResponse.json(
+        { success: false, error: '无管理员权限，请先登录后台' },
+        { status: 401 }
+      );
+    }
+
+    const rawScope = req.cookies.get('dingcan_admin_scope')?.value?.trim().toLowerCase();
+    if (rawScope !== 'default') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: '订单删除为主租户(总店)超级管理员专属权限：请在总店后台 /admin 登录后操作；分店后台无权删除任何订单记录',
+        },
+        { status: 403 }
+      );
+    }
+
+    const tenantId = getTenantIdFromRequest(req);
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ success: false, error: '订单ID不能为空' }, { status: 400 });
+    }
+
+    const ok = await deleteOrder(id, tenantId);
+    if (!ok) {
+      return NextResponse.json(
+        { success: false, error: '未找到该订单（或不属于当前门店）' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `订单 ${id} 及其明细已彻底删除`,
+      tenantId,
+    });
+  } catch (error: any) {
+    console.error('Failed to delete order:', error);
+    return NextResponse.json(
+      { success: false, error: '删除订单失败: ' + (error?.message || '') },
       { status: 500 }
     );
   }

@@ -9,5 +9,6 @@ export async function POST(req: NextRequest) {
 
   response.cookies.delete('restaurant_admin_auth');
   response.cookies.delete(STAFF_AUTH_COOKIE);
+  response.cookies.delete('dingcan_admin_scope');
   return response;
 }

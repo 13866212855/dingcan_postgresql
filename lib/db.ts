@@ -888,6 +888,34 @@ export async function deleteDish(id: number, tenantId = 'default'): Promise<bool
   return true;
 }
 
+/**
+ * 彻底删除一笔订单及其全部明细（仅主租户超管会话可触达的底层能力）。
+ * 事务内先删明细再删主单：订单不存在/不属于该租户时回滚返回 false。
+ */
+export async function deleteOrder(id: string, tenantId = 'default'): Promise<boolean> {
+  const pool = await ensureDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM order_items WHERE order_id = $1 AND tenant_id = $2', [id, tenantId]);
+    const del = await client.query(
+      'DELETE FROM orders WHERE id = $1 AND tenant_id = $2 RETURNING id',
+      [id, tenantId]
+    );
+    if (del.rows.length === 0) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      return false;
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ----------------------------------------------------
 // Cross-Tenant Dish Import (主租户菜品库 → 子租户菜品库)
 // ----------------------------------------------------

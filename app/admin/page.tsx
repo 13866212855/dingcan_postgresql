@@ -63,6 +63,12 @@ export default function AdminPage() {
   const [staffPass, setStaffPass] = useState('');
   const isStaffMode = staffInfo !== null;
 
+  // 管理员身份范围（scope）：登录时所在租户。
+  // 'default' = 在总店后台 /admin 登录的超级管理员 → 独享跨租户订单删除权；
+  // 其他值/空 = 分店管理员或旧会话 → 无订单删除权（服务端同样 fail-closed 校验）
+  const [adminScope, setAdminScope] = useState<string>('');
+  const canDeleteOrders = !isStaffMode && adminScope === 'default';
+
   // Multi-Tenant state:
   // 当直接访问 /admin 时（URL 无 tenant 参数），坚决严格锁定总后台 'default'，杜绝继承前台遗留的分店 cookie/localStorage！
   // 仅当 URL 中显式携带 ?tenant= 或 ?t= 时，才进入对应分店后台
@@ -207,23 +213,28 @@ export default function AdminPage() {
               // 接单员会话：仅当其所属租户与当前后台租户一致时才放行（跨租户URL显示登录页）
               if (data.staff.tenantId === currentTenantId) {
                 setStaffInfo(data.staff);
+                setAdminScope('');
                 setIsAuthenticated(true);
               } else {
                 setStaffInfo(null);
+                setAdminScope('');
                 setIsAuthenticated(false);
               }
             } else {
               setStaffInfo(null);
+              setAdminScope(typeof data.scope === 'string' ? data.scope : '');
               setIsAuthenticated(true);
             }
           } else {
             setStaffInfo(null);
+            setAdminScope('');
             setIsAuthenticated(false);
           }
         }
       } catch {
         if (!isCancelled) {
           setStaffInfo(null);
+          setAdminScope('');
           setIsAuthenticated(false);
         }
       }
@@ -443,6 +454,7 @@ export default function AdminPage() {
       if (data.success) {
         setIsAuthenticated(true);
         setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
+        setAdminScope(currentTenantId); // 登录身份范围 = 登录时所在租户（服务端同步写 scope cookie）
         safeSetItem('restaurant_admin_auth', 'true');
         updateActiveTenant(currentTenantId);
       } else {
@@ -483,6 +495,7 @@ export default function AdminPage() {
       const data = await res.json();
       if (data.success && data.staff) {
         setStaffInfo(data.staff);
+        setAdminScope('');
         setIsAuthenticated(true);
         setActiveTab('orders');
         setStaffPass('');
@@ -493,6 +506,31 @@ export default function AdminPage() {
       setLoginError('登录请求失败: ' + (err?.message || ''));
     } finally {
       setIsLoggingIn(false);
+    }
+  };
+
+  // 删除订单（仅主租户超管会话可见可用；子分店后台无此能力，服务端同样 fail-closed 拒绝）
+  const handleDeleteOrder = async (order: Order) => {
+    if (!canDeleteOrders) return;
+    const label = order.table_no || order.delivery_contact || order.id;
+    const amount = (order.final_amount !== undefined ? order.final_amount : order.total_amount).toFixed(2);
+    if (!confirm(`确定要彻底删除订单【${label}】(¥${amount}) 吗？\n订单及其全部明细将从数据库中移除，且不再计入任何统计，此操作不可恢复。`)) return;
+    if (!confirm(`再次确认：真的要删除这笔订单（${order.id}）吗？`)) return;
+    try {
+      const res = await fetch(`/api/orders/${order.id}?tenant=${encodeURIComponent(currentTenantId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (selectedOrderDetail && selectedOrderDetail.id === order.id) {
+          setSelectedOrderDetail(null);
+        }
+        fetchOrders(true);
+      } else {
+        alert(data.error || '删除失败');
+      }
+    } catch (e: any) {
+      alert('删除请求失败: ' + (e?.message || ''));
     }
   };
 
@@ -1572,6 +1610,17 @@ export default function AdminPage() {
                               title="取消订单"
                             >
                               <XCircle className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {/* 彻底删除订单：仅主租户超管会话显示（分店管理员/接单员不可见，服务端同样拒绝） */}
+                          {canDeleteOrders && (
+                            <button
+                              onClick={() => handleDeleteOrder(order)}
+                              className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              title="彻底删除此订单（主租户特权，不可恢复）"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>

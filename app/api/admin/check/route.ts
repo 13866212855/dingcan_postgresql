@@ -14,9 +14,13 @@ export async function GET(req: NextRequest) {
   // 1. 管理员会话优先
   const token = req.cookies.get('restaurant_admin_auth')?.value;
   if (token === 'authenticated_admin_token') {
+    // scope = 登录时所在租户（/admin 登录为 'default' 主租户超管；?tenant=xxx 登录为分店管理员）。
+    // 缺失（旧版本会话）按 '' 处理 → 前端无删除权，重新登录即可获得，fail-closed
+    const rawScope = req.cookies.get('dingcan_admin_scope')?.value?.trim().toLowerCase() || '';
     return NextResponse.json({
       authenticated: true,
       role: 'admin',
+      scope: rawScope,
       user: { username: 'admin', role: '管理员' },
     });
   }

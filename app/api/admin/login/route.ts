@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { normalizeTenantId } from '@/lib/tenant';
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,6 +23,21 @@ export async function POST(req: NextRequest) {
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
         maxAge: 60 * 60 * 24 * 7, // 7 days
+      });
+
+      // 记录登录时的管理身份范围（scope）：
+      // 在 /admin（无参）登录 → 'default' = 主租户超级管理员（独享跨租户订单删除权）
+      // 在 /admin?tenant=xxx 登录 → 'xxx' = 该分店管理员（仅本店运营，无删除权）
+      // 服务端后续以该 cookie 为准做权限判定，浏览器切换租户视图不会改变身份范围
+      const scopeTenant = normalizeTenantId(typeof tenant === 'string' ? tenant : '');
+      response.cookies.set({
+        name: 'dingcan_admin_scope',
+        value: scopeTenant,
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 7, // 7 days，与管理员会话同生命周期
       });
 
       // If a specific tenant is specified, persist it in cookie as well
