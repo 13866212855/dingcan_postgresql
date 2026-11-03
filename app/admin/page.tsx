@@ -49,18 +49,16 @@ import { safeSetItem, safeRemoveItem } from '@/lib/storage';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
 
 export default function AdminPage() {
-  // Auth state
+  // Auth state（方案二：单一智能登录表单——身份由账号形态自动识别：纯数字=接单员手机号，其他=管理员账号。
+  // 页面不呈现任何管理员入口线索，管理员与接单员共用同一地址与同一张表单）
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [loginUser, setLoginUser] = useState('');
+  const [loginAccount, setLoginAccount] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // 接单员（order_handler）会话与登录模式（mymultenant Tier 3 角色）
+  // 接单员（order_handler）会话（mymultenant Tier 3 角色）
   const [staffInfo, setStaffInfo] = useState<{ id: number; tenantId: string; name: string; phone: string } | null>(null);
-  const [loginMode, setLoginMode] = useState<'admin' | 'staff'>('admin');
-  const [staffPhone, setStaffPhone] = useState('');
-  const [staffPass, setStaffPass] = useState('');
   const isStaffMode = staffInfo !== null;
 
   // 管理员身份范围（scope）：登录时所在租户。
@@ -435,30 +433,63 @@ export default function AdminPage() {
     return () => clearInterval(interval);
   }, [isAuthenticated, autoRefresh, fetchOrders]);
 
-  // Handle Login
-  const handleLogin = async (e: React.FormEvent) => {
+  // 智能识别登录（方案二核心）：纯数字账号走接单员（手机号+密码）通道；其他走管理员账号通道。
+  // 两条通道的错误提示分别脱敏：接单员提示手机号/联系店长；管理员统一为中性"账号或密码错误"，绝不出现"管理员"字样
+  const handleSmartLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     unlockAudio();
     setIsAudioActivated(true);
+    const account = loginAccount.trim();
+    const pass = loginPass.trim();
+    if (!account || !pass) {
+      setLoginError('请输入账号和密码');
+      return;
+    }
     setLoginError('');
     setIsLoggingIn(true);
 
     try {
-      const res = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUser, password: loginPass, tenant: currentTenantId }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setIsAuthenticated(true);
-        setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
-        setAdminScope(currentTenantId); // 登录身份范围 = 登录时所在租户（服务端同步写 scope cookie）
-        safeSetItem('restaurant_admin_auth', 'true');
-        updateActiveTenant(currentTenantId);
+      if (/^[0-9]{5,20}$/.test(account)) {
+        // —— 接单员通道（手机号登录）——
+        const res = await fetch('/api/admin/staff-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: account, password: pass, tenant: currentTenantId }),
+        });
+        const data = await res.json();
+        if (data.success && data.staff) {
+          setStaffInfo(data.staff);
+          setAdminScope('');
+          setIsAuthenticated(true);
+          setActiveTab('orders');
+          setLoginPass('');
+          // 租户上下文自愈：以接单员真实所属门店为准（URL 误带错误 tenant= 参数时自动纠正）
+          if (data.staff.tenantId && data.staff.tenantId !== currentTenantId) {
+            updateActiveTenant(data.staff.tenantId);
+          }
+        } else {
+          setLoginError(data.error || '手机号或密码错误，请联系店长');
+        }
       } else {
-        setLoginError(data.error || '用户名或密码错误');
+        // —— 管理员通道（账号登录）——
+        // 租户上下文自愈：URL 带了不存在的租户参数时，按总店(default)身份登录
+        const knownTenant = tenants.some((t) => t.id === currentTenantId) ? currentTenantId : 'default';
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: account, password: pass, tenant: knownTenant }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
+          setAdminScope(knownTenant); // 登录身份范围 = 登录时所在租户（服务端同步写 scope cookie）
+          setIsAuthenticated(true);
+          safeSetItem('restaurant_admin_auth', 'true');
+          updateActiveTenant(knownTenant);
+          setLoginPass('');
+        } else {
+          setLoginError('账号或密码错误');
+        }
       }
     } catch (err: any) {
       setLoginError('登录请求失败: ' + (err?.message || ''));
@@ -479,35 +510,7 @@ export default function AdminPage() {
     setIsAuthenticated(false);
   };
 
-  // 接单员手机号登录（mymultenant Tier 3：登录后仅见本店订单中心）
-  const handleStaffLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    unlockAudio();
-    setIsAudioActivated(true);
-    setLoginError('');
-    setIsLoggingIn(true);
-    try {
-      const res = await fetch('/api/admin/staff-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: staffPhone, password: staffPass, tenant: currentTenantId }),
-      });
-      const data = await res.json();
-      if (data.success && data.staff) {
-        setStaffInfo(data.staff);
-        setAdminScope('');
-        setIsAuthenticated(true);
-        setActiveTab('orders');
-        setStaffPass('');
-      } else {
-        setLoginError(data.error || '接单员登录失败');
-      }
-    } catch (err: any) {
-      setLoginError('登录请求失败: ' + (err?.message || ''));
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
+  // 接单员手机号登录逻辑已并入上方 handleSmartLogin（按账号形态自动分流，不再有独立表单）
 
   // 删除订单（仅主租户超管会话可见可用；子分店后台无此能力，服务端同样 fail-closed 拒绝）
   const handleDeleteOrder = async (order: Order) => {
@@ -774,23 +777,7 @@ export default function AdminPage() {
               )}
             </div>
             <h1 className="text-xl font-black text-neutral-900">{storeInfo.name}</h1>
-            <p className="text-xs text-neutral-500 mt-1">管理后台登录 · 验证管理员身份</p>
-
-            {/* Tenant badge on login screen */}
-            {isMasterAdmin ? (
-              <div className="mt-3 inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-amber-50 border border-amber-200 rounded-full text-xs text-neutral-800 shadow-xs max-w-full">
-                <Building2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-[11px] text-neutral-500 shrink-0">系统登录:</span>
-                <span className="font-bold text-amber-900 text-xs">总店管理后台 (主系统)</span>
-              </div>
-            ) : (
-              <div className="mt-3 inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-amber-50 border border-amber-200 rounded-full text-xs text-neutral-800 shadow-xs max-w-full">
-                <Store className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-[11px] text-neutral-500 shrink-0">分店后台:</span>
-                <span className="font-bold text-amber-900 text-xs">{storeInfo.name}</span>
-                <span className="text-[10px] text-neutral-400">({currentTenantId})</span>
-              </div>
-            )}
+            <p className="text-xs text-neutral-500 mt-1">欢迎登录</p>
           </div>
 
           {loginError && (
@@ -800,108 +787,46 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* 登录身份模式切换：管理员 / 接单员 */}
-          <div className="mb-4 grid grid-cols-2 gap-1.5 p-1 bg-neutral-100 rounded-xl">
+          {/* 方案二：单一智能登录表单——身份由账号形态自动识别（纯数字=员工手机号；其他=管理员账号）。
+              页面仅呈现"店名+登录"，不含任何管理后台入口线索；两条通道错误提示均已脱敏 */}
+          <form onSubmit={handleSmartLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1">账号</label>
+              <input
+                id="login-account"
+                type="text"
+                required
+                autoComplete="username"
+                value={loginAccount}
+                onChange={(e) => setLoginAccount(e.target.value)}
+                placeholder="请输入手机号或账号"
+                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1">密码</label>
+              <input
+                id="login-password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                placeholder="请输入密码"
+                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+              />
+            </div>
+
             <button
-              type="button"
-              onClick={() => { setLoginMode('admin'); setLoginError(''); }}
-              className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
-                loginMode === 'admin' ? 'bg-white text-amber-700 shadow-xs' : 'text-neutral-500 hover:text-neutral-700'
-              }`}
+              id="btn-smart-login"
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
             >
-              <Building2 className="w-3.5 h-3.5" />
-              <span>管理员登录</span>
+              {isLoggingIn ? '验证中...' : '立即登录'}
             </button>
-            <button
-              type="button"
-              onClick={() => { setLoginMode('staff'); setLoginError(''); }}
-              className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
-                loginMode === 'staff' ? 'bg-white text-indigo-700 shadow-xs' : 'text-neutral-500 hover:text-neutral-700'
-              }`}
-            >
-              <UserCog className="w-3.5 h-3.5" />
-              <span>接单员登录</span>
-            </button>
-          </div>
-
-          {loginMode === 'admin' ? (
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">用户名</label>
-                <input
-                  id="admin-username"
-                  type="text"
-                  required
-                  value={loginUser}
-                  onChange={(e) => setLoginUser(e.target.value)}
-                  placeholder="请输入管理员账号"
-                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">登录密码</label>
-                <input
-                  id="admin-password"
-                  type="password"
-                  required
-                  value={loginPass}
-                  onChange={(e) => setLoginPass(e.target.value)}
-                  placeholder="请输入密码"
-                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
-                />
-              </div>
-
-              <button
-                id="btn-admin-login"
-                type="submit"
-                disabled={isLoggingIn}
-                className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
-              >
-                {isLoggingIn ? '验证中...' : '立即登录'}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleStaffLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">接单员手机号</label>
-                <input
-                  id="staff-phone"
-                  type="tel"
-                  required
-                  value={staffPhone}
-                  onChange={(e) => setStaffPhone(e.target.value)}
-                  placeholder="店长为您配置的手机号"
-                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-neutral-700 mb-1">登录密码</label>
-                <input
-                  id="staff-password"
-                  type="password"
-                  required
-                  value={staffPass}
-                  onChange={(e) => setStaffPass(e.target.value)}
-                  placeholder="初始密码默认 123456"
-                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                />
-              </div>
-
-              <button
-                id="btn-staff-login"
-                type="submit"
-                disabled={isLoggingIn}
-                className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-sky-600 hover:from-indigo-600 hover:to-sky-700 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-98 disabled:opacity-70"
-              >
-                {isLoggingIn ? '验证中...' : '登录接单工作台'}
-              </button>
-              <p className="text-[10px] text-neutral-400 text-center leading-relaxed">
-                接单员登录后仅显示本店订单中心：接收新单提醒、接单制作、出餐完成、核对收款
-              </p>
-            </form>
-          )}
+          </form>
 
           {/* Link to Front */}
           <div className="mt-6 pt-4 border-t border-neutral-100 text-center">
@@ -1752,7 +1677,7 @@ export default function AdminPage() {
                             <td className="py-3 px-4">
                               <div className="relative w-14 h-14 aspect-square rounded-xl overflow-hidden bg-neutral-100 border border-neutral-200 flex items-center justify-center shrink-0 shadow-2xs">
                                 <Image
-                                  src={dish.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80'}
+                                  src={dish.image || '/uploads/dishes/u_ad259a604dda.jpg'}
                                   alt={dish.name}
                                   fill
                                   sizes="56px"

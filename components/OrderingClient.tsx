@@ -531,7 +531,7 @@ export default function OrderingClient({
                       onClick={() => setActiveDish(dish)}
                     >
                       <Image
-                        src={dish.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80'}
+                        src={dish.image || '/uploads/dishes/u_ad259a604dda.jpg'}
                         alt={dish.name}
                         fill
                         className="object-cover group-hover:scale-105 transition-transform duration-300"

@@ -10,6 +10,7 @@ set "CONTAINER_NAME=dingcan_postgresql_tenant"
 set "HOST_PORT=7846"
 set "INTERNAL_PORT=3000"
 set "DATA_DIR=D:\docker\%CONTAINER_NAME%\data"
+set "UPLOADS_DIR=D:\Development\github\dingcan_postgresql\public\uploads"
 
 echo [1/4] Building Docker image %IMAGE_NAME%:latest...
 docker build -t %IMAGE_NAME%:latest .
@@ -34,9 +35,10 @@ echo.
 
 echo [4/4] Starting new container...
 if not exist "%DATA_DIR%" ( mkdir "%DATA_DIR%" )
+if not exist "%UPLOADS_DIR%" ( mkdir "%UPLOADS_DIR%" )
 
-:: 启动容器
-docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:%INTERNAL_PORT% -v "%DATA_DIR%:/app/data" --restart unless-stopped %IMAGE_NAME%:latest
+:: 启动容器（uploads 卷挂载宿主项目目录：运行时上传图片持久化，且与镜像构建共用同一数据源）
+docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:%INTERNAL_PORT% -v "%DATA_DIR%:/app/data" -v "%UPLOADS_DIR%:/app/public/uploads" --restart unless-stopped %IMAGE_NAME%:latest
 
 if errorlevel 1 (
     echo [ERROR] Failed to start Docker container.

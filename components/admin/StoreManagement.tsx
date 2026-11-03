@@ -22,27 +22,27 @@ import { AppSettings } from '@/types';
 const PRESET_LOGOS = [
   {
     name: '精美砂锅煲',
-    url: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_168ef1623572.jpg',
   },
   {
     name: '经典家常炒菜',
-    url: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_6e9b0ced6a5b.jpg',
   },
   {
     name: '中式大厨掌勺',
-    url: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_8d1b515318a2.jpg',
   },
   {
     name: '传统特色小吃',
-    url: 'https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_1949812668d8.jpg',
   },
   {
     name: '养生汤饮靓汤',
-    url: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_a0b2d79e4371.jpg',
   },
   {
     name: '鲜香特色面馆',
-    url: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_91918a049aa5.jpg',
   },
 ];
 

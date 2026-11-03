@@ -14,16 +14,16 @@ interface DishFormModalProps {
 }
 
 const PRESET_DISH_IMAGES = [
-  { name: '红烧肉', url: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80' },
-  { name: '辣子鸡/鸡丁', url: 'https://images.unsplash.com/photo-1525755662778-989d0524087e?w=600&auto=format&fit=crop&q=80' },
-  { name: '清炒时蔬', url: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=600&auto=format&fit=crop&q=80' },
-  { name: '麻辣豆腐', url: 'https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?w=600&auto=format&fit=crop&q=80' },
-  { name: '凉菜卤味', url: 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?w=600&auto=format&fit=crop&q=80' },
-  { name: '爽口黄瓜', url: 'https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?w=600&auto=format&fit=crop&q=80' },
-  { name: '养生排骨汤', url: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600&auto=format&fit=crop&q=80' },
-  { name: '黄金炒饭', url: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=600&auto=format&fit=crop&q=80' },
-  { name: '手工饺子', url: 'https://images.unsplash.com/photo-1496116218417-1a781b1c416c?w=600&auto=format&fit=crop&q=80' },
-  { name: '冰镇解暑饮', url: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=600&auto=format&fit=crop&q=80' },
+  { name: '红烧肉', url: '/uploads/dishes/u_e70b10ddba26.jpg' },
+  { name: '辣子鸡/鸡丁', url: '/uploads/dishes/u_89496c291093.jpg' },
+  { name: '清炒时蔬', url: '/uploads/dishes/u_062866a00e32.jpg' },
+  { name: '麻辣豆腐', url: '/uploads/dishes/u_b152d8cdedf1.jpg' },
+  { name: '凉菜卤味', url: '/uploads/dishes/u_26db1dc7b36a.jpg' },
+  { name: '爽口黄瓜', url: '/uploads/dishes/u_cae3c9156b62.jpg' },
+  { name: '养生排骨汤', url: '/uploads/dishes/u_d7c7b1478f4a.jpg' },
+  { name: '黄金炒饭', url: '/uploads/dishes/u_8ef108adac14.jpg' },
+  { name: '手工饺子', url: '/uploads/dishes/u_b0358bd5f97f.jpg' },
+  { name: '冰镇解暑饮', url: '/uploads/dishes/u_7aba70d6dfb0.jpg' },
 ];
 
 const DEFAULT_CATEGORIES = ['特色热炒', '经典主食', '养生靓汤', '开胃凉菜', '酒水饮料'];
@@ -592,10 +592,10 @@ function DishFormInner({
                   />
                 </label>
                 <span className="text-[11px] text-neutral-400">支持 jpg/png/webp · 自动压缩与AI推断</span>
-                {image && (image.includes('cloudinary.com') || image.includes('res.cloudinary')) && (
+                {image && (image.startsWith('/uploads/') || image.includes('cloudinary.com')) && (
                   <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                     <Cloud className="w-3 h-3 mr-1 text-emerald-600" />
-                    Cloudinary 云端直链 (永久防丢)
+                    服务器存储 (持久保存)
                   </span>
                 )}
               </div>

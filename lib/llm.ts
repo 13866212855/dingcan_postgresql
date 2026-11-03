@@ -1,6 +1,6 @@
 import { getSettings } from '@/lib/db';
 import type { LLMConfig } from '@/types';
-import { uploadToCloudinary } from '@/lib/cloudinary';
+import { saveImageToPublicUploads } from '@/lib/localImageStore';
 import { optimizeImageBuffer } from '@/lib/imageProcessor';
 
 const cleanEnv = (val?: string) => val ? val.replace(/^["']|["']$/g, '').trim() : undefined;
@@ -802,10 +802,16 @@ export async function generateDishImageWithAI(params: {
     }
 
     try {
-      const cloudRes = await uploadToCloudinary(uploadBuffer, 'restaurant_dishes', `ai_${params.dishName}`);
-      return { success: true, url: cloudRes.secure_url, publicId: cloudRes.public_id };
+      // 本地存储优先（大陆环境 Cloudinary 交付不可达）：优化成功为 webp，否则按原始格式落盘
+      const saved = saveImageToPublicUploads(
+        uploadBuffer,
+        'restaurant_dishes',
+        `ai_${params.dishName}`,
+        uploadBuffer === buffer ? 'png' : 'webp'
+      );
+      return { success: true, url: saved.url, publicId: saved.publicId };
     } catch (upErr: any) {
-      return { success: false, error: `转存云端失败: ${upErr?.message || ''}` };
+      return { success: false, error: `本地存储失败: ${upErr?.message || ''}` };
     }
   }
 

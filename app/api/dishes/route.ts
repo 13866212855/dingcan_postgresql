@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
         price: numPrice,
         category: category?.trim() || '特色热炒',
         description: description?.trim() || '',
-        image: image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
+        image: image || '/uploads/dishes/u_ad259a604dda.jpg',
         status: status !== undefined ? Number(status) : 1,
         taste_options: typeof taste_options === 'string' ? taste_options.trim() : '',
       },

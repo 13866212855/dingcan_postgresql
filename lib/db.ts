@@ -52,7 +52,7 @@ export const DEFAULT_TENANTS: Tenant[] = [
     id: 'chuan',
     name: '蜀香阁·地道川菜',
     slogan: '麻辣鲜香 · 传承古法巴蜀味',
-    logo: 'https://images.unsplash.com/photo-1563245372-f21724e3856d?auto=format&fit=crop&w=300&q=80',
+    logo: '/uploads/dishes/u_a0065f1c4661.jpg',
     description: '正宗四川非遗老师傅掌勺，汉源花椒配二荆条，醇麻爽辣，酣畅淋漓。',
     phone: '028-66668888',
     address: '锦里老街中段22号 (川味一分店)',
@@ -62,7 +62,7 @@ export const DEFAULT_TENANTS: Tenant[] = [
     id: 'yue',
     name: '粤品轩·精致早茶',
     slogan: '皮脆肉嫩 · 原汁原味粤派名膳',
-    logo: 'https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?auto=format&fit=crop&w=300&q=80',
+    logo: '/uploads/dishes/u_27e437972b91.jpg',
     description: '岭南传统手工早茶与顺德名菜，一盅两件，清而不淡，鲜而不俗。',
     phone: '020-83339999',
     address: '珠江新城美食广场F栋 (早茶二分店)',
@@ -77,7 +77,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 48,
       category: '热炒硬菜',
       description: '肥而不腻，入口即化，慢火煨炖2小时的本帮地道风味。',
-      image: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_ef1d095c1c27.jpg',
       status: 1,
     },
     {
@@ -85,7 +85,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 22,
       category: '主食米面',
       description: '粒粒分明，金黄松软，配有火腿碎、青豆、虾仁与新鲜鸡蛋。',
-      image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_1ff2d1b10352.jpg',
       status: 1,
     },
     {
@@ -93,7 +93,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 26,
       category: '热炒硬菜',
       description: '正宗川味，麻辣醇香，红亮鲜香，选用老豆腐慢入味。',
-      image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_485d8cabdf27.jpg',
       status: 1,
     },
     {
@@ -101,7 +101,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 18,
       category: '清爽时蔬',
       description: '每日清晨菜场直送，大火快炒保留脆嫩清香。',
-      image: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_5bec0bac3050.jpg',
       status: 1,
     },
     {
@@ -109,7 +109,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 16,
       category: '清爽时蔬',
       description: '刀工均匀细致，酸辣爽脆开胃，家常必点经典小炒。',
-      image: 'https://images.unsplash.com/photo-1589302168068-964664d93dc0?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_b5bd54037923.jpg',
       status: 1,
     },
     {
@@ -117,7 +117,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 36,
       category: '热炒硬菜',
       description: '鲜嫩鸡腿肉丁搭配香脆花生米与大葱白，甜酸微辣。',
-      image: 'https://images.unsplash.com/photo-1525755662778-989d0524087e?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_f329255b47c2.jpg',
       status: 1,
     },
     {
@@ -125,7 +125,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 24,
       category: '主食米面',
       description: '皮薄大馅，纯手工现包现煮，鲜香多汁配蒜醋汁。',
-      image: 'https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_a67b43b249db.jpg',
       status: 1,
     },
     {
@@ -133,7 +133,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 18,
       category: '汤品饮品',
       description: '浓郁番茄出汁，蛋花如丝细腻，温润暖胃，清淡爽口。',
-      image: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_cb4c19228b44.jpg',
       status: 1,
     },
     {
@@ -141,7 +141,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 15,
       category: '汤品饮品',
       description: '乌梅、山楂、陈皮古法慢熬，冰糖调和，解腻生津。',
-      image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_8934521feb73.jpg',
       status: 1,
     },
   ],
@@ -151,7 +151,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 58,
       category: '巴蜀热炒',
       description: '选用优质牛里脊，红油滚烫，麻辣鲜香，肉质滑嫩多汁。',
-      image: 'https://images.unsplash.com/photo-1569058242252-623df46b5025?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_8d0e6edbbb9d.jpg',
       status: 1,
     },
     {
@@ -159,7 +159,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 46,
       category: '巴蜀热炒',
       description: '在红辣椒堆里寻找黄金鸡肉丁，外酥里嫩，麻香四溢。',
-      image: 'https://images.unsplash.com/photo-1525755662778-989d0524087e?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_f329255b47c2.jpg',
       status: 1,
     },
     {
@@ -167,7 +167,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 38,
       category: '巴蜀热炒',
       description: '选用肥三瘦七二刀肉，配鲜红蒜苗与郫县豆瓣酱，油润香糯。',
-      image: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_ef1d095c1c27.jpg',
       status: 1,
     },
     {
@@ -175,7 +175,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 32,
       category: '风味凉菜',
       description: '精选牛肉、牛肚薄切，淋特调红油与熟芝麻、花生碎，回味悠长。',
-      image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_485d8cabdf27.jpg',
       status: 1,
     },
     {
@@ -183,7 +183,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 52,
       category: '巴蜀热炒',
       description: '活鱼现杀起片，老坛古法泡酸菜，酸爽开胃，鱼汤金黄鲜美。',
-      image: 'https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_c0bce8ac52ad.jpg',
       status: 1,
     },
     {
@@ -191,7 +191,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 18,
       category: '特色小吃',
       description: '细面劲道，配芽菜肉末与红油花生碎，咸鲜微辣。',
-      image: 'https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_555b5f42f9d4.jpg',
       status: 1,
     },
     {
@@ -199,7 +199,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 22,
       category: '特色小吃',
       description: '糯米捶打现炸，外酥里糯，淋浓郁老红糖浆配黄豆粉。',
-      image: 'https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_a67b43b249db.jpg',
       status: 1,
     },
     {
@@ -207,7 +207,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 12,
       category: '甜品饮品',
       description: '纯天然假酸浆籽手搓气泡，配山楂碎、葡萄干、花生碎解辣神器。',
-      image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_8934521feb73.jpg',
       status: 1,
     },
   ],
@@ -217,7 +217,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 36,
       category: '精致点心',
       description: '皮薄如纸晶莹剔透，内包三只鲜弹整虾，鲜美多汁。',
-      image: 'https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_a67b43b249db.jpg',
       status: 1,
     },
     {
@@ -225,7 +225,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 28,
       category: '精致点心',
       description: '炸后慢蒸脱骨，软糯入味，富含胶原蛋白，酱香浓郁。',
-      image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_485d8cabdf27.jpg',
       status: 1,
     },
     {
@@ -233,7 +233,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 26,
       category: '精致点心',
       description: '酵母面皮松软开花，内馅选用秘制肥瘦叉烧肉，香甜不腻。',
-      image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_1ff2d1b10352.jpg',
       status: 1,
     },
     {
@@ -241,7 +241,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 68,
       category: '经典粤菜',
       description: '传统炭火暗炉烤制，皮脆肉嫩骨香，配酸梅酱化腻提鲜。',
-      image: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_ef1d095c1c27.jpg',
       status: 1,
     },
     {
@@ -249,7 +249,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 32,
       category: '粉面主食',
       description: '猛火锅气十足，牛肉嫩滑多汁，河粉焦香爽滑不油腻。',
-      image: 'https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_555b5f42f9d4.jpg',
       status: 1,
     },
     {
@@ -257,7 +257,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 22,
       category: '清爽时蔬',
       description: '原产地直运菜心，滚水白灼淋鲜香豉油，甘甜清脆。',
-      image: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_5bec0bac3050.jpg',
       status: 1,
     },
     {
@@ -265,7 +265,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 18,
       category: '养生粥品',
       description: '香米熬制如丝绵滑，新鲜猪里脊与无铅皮蛋现滚慢烹。',
-      image: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_cb4c19228b44.jpg',
       status: 1,
     },
     {
@@ -273,7 +273,7 @@ const DEFAULT_DISHES_MAP: Record<string, Omit<Dish, 'id'>[]> = {
       price: 20,
       category: '甜品糖水',
       description: '新鲜台芒打茸，配西柚果粒、晶莹西米与香浓椰浆，甘甜沁心。',
-      image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=800&q=80',
+      image: '/uploads/dishes/u_8934521feb73.jpg',
       status: 1,
     },
   ],
@@ -1177,6 +1177,24 @@ export async function verifyStaffLogin(
     [tenantId, (phone || '').trim(), (password || '').trim()]
   );
   return res.rows[0] ? formatRow<StaffUserRecord>(res.rows[0]) : null;
+}
+
+/**
+ * 跨租户凭据定位（登录兜底）：页面租户上下文可能不正确（如误将手机号填进 URL 的 tenant= 参数），
+ * 手机号+密码在全租户范围内唯一命中时即可确定身份，保证接单员登录不受页面 URL 影响。
+ */
+export async function findStaffByCredentials(
+  phone: string,
+  password: string
+): Promise<StaffUserRecord[]> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${STAFF_COLS} FROM staff_users
+     WHERE phone = $1 AND password = $2 AND enabled = 1
+     ORDER BY tenant_id ASC`,
+    [(phone || '').trim(), (password || '').trim()]
+  );
+  return res.rows.map((row) => formatRow<StaffUserRecord>(row));
 }
 
 /** 会话cookie静默校验：每次后台check时回查数据库，停用/删除立即失效（技能Pillar 3 静默验证要求） */

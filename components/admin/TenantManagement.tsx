@@ -33,23 +33,23 @@ interface TenantManagementProps {
 const PRESET_STORE_LOGOS = [
   {
     name: '中式正餐炒菜',
-    url: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_6e9b0ced6a5b.jpg',
   },
   {
     name: '川湘麻辣风味',
-    url: 'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_c5d4ba52a186.jpg',
   },
   {
     name: '精致砂锅煲仔',
-    url: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_168ef1623572.jpg',
   },
   {
     name: '特色面食粉馆',
-    url: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_91918a049aa5.jpg',
   },
   {
     name: '养生汤膳靓汤',
-    url: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=160&auto=format&fit=crop&q=80',
+    url: '/uploads/dishes/u_a0b2d79e4371.jpg',
   },
 ];
 

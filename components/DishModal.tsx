@@ -28,7 +28,7 @@ export default function DishModal({
         {/* Dish Image */}
         <div className="relative w-full h-56 bg-neutral-100 shrink-0">
           <Image
-            src={dish.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80'}
+            src={dish.image || '/uploads/dishes/u_ad259a604dda.jpg'}
             alt={dish.name}
             fill
             className="object-cover"

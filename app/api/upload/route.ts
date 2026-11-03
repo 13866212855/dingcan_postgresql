@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { uploadToCloudinary } from '@/lib/cloudinary';
+import { saveImageToPublicUploads } from '@/lib/localImageStore';
 import { optimizeImageBuffer } from '@/lib/imageProcessor';
 import { getLLMConfig, analyzeDishImageWithAI } from '@/lib/llm';
 import { getTenantIdFromRequest } from '@/lib/tenant';
@@ -98,8 +99,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Upload to Cloudinary
-    const uploadResult = await uploadToCloudinary(uploadBuffer, targetFolder, targetFilename);
+    // 存储策略（大陆环境优化）：本地 public/uploads 优先（同域 /uploads 直链，展示层零外网依赖）；
+    // 本地写入失败时回退 Cloudinary。provider 标记实际存储位置。
+    let uploadResult: {
+      url: string;
+      secure_url: string;
+      public_id: string;
+      format: string;
+      bytes: number;
+    };
+    let storageProvider = 'local';
+    try {
+      const rawExt = optimizationInfo?.format || (targetFilename.split('.').pop() || 'jpg');
+      const ext = (rawExt === 'jpeg' ? 'jpg' : rawExt).toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const saved = saveImageToPublicUploads(uploadBuffer, targetFolder, targetFilename, ext);
+      uploadResult = {
+        url: saved.url,
+        secure_url: saved.url,
+        public_id: saved.publicId,
+        format: ext,
+        bytes: uploadBuffer.length,
+      };
+    } catch (localErr) {
+      console.warn('[Upload] Local storage failed, falling back to Cloudinary:', localErr);
+      const cloudRes = await uploadToCloudinary(uploadBuffer, targetFolder, targetFilename);
+      uploadResult = {
+        url: cloudRes.url,
+        secure_url: cloudRes.secure_url,
+        public_id: cloudRes.public_id,
+        format: cloudRes.format,
+        bytes: cloudRes.bytes,
+      };
+      storageProvider = 'cloudinary';
+    }
 
     // 如果客户端显式请求 AI 视觉智能分析（如上传菜品时自动识别并写简介）
     let aiAnalysis: any = null;
@@ -137,13 +169,13 @@ export async function POST(req: NextRequest) {
       public_id: uploadResult.public_id,
       format: uploadResult.format,
       bytes: uploadResult.bytes,
-      provider: 'cloudinary',
+      provider: storageProvider,
       optimization: optimizationInfo,
       ai_analysis: aiAnalysis,
       ai_error: aiError,
       message: optimizationInfo?.is_optimized
         ? `图片已成功经 AI 智能优化（体积精简 ${optimizationInfo.saved_percentage}），更适合手机端极速加载`
-        : '图片已成功上传至云端存储',
+        : '图片已成功上传至服务器存储',
     });
   } catch (error: any) {
     console.error('Cloudinary API upload error:', error);
