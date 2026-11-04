@@ -51,6 +51,13 @@ export async function POST(req: NextRequest) {
       printer_copies,
       printer_ticket_header,
       printer_ticket_footer,
+      smtp_host,
+      smtp_port,
+      smtp_secure,
+      smtp_user,
+      smtp_pass,
+      notify_email_to,
+      smtp_timeout,
     } = body;
 
     if (enable_dine_in !== undefined) {
@@ -177,6 +184,32 @@ export async function POST(req: NextRequest) {
     }
     if (printer_ticket_footer !== undefined) {
       await updateSetting('printer_ticket_footer', String(printer_ticket_footer).trim(), tenantId);
+    }
+
+    // SMTP 邮件通知配置更新
+    if (smtp_host !== undefined) {
+      await updateSetting('smtp_host', String(smtp_host).trim(), tenantId);
+    }
+    if (smtp_port !== undefined) {
+      const portNum = Number(smtp_port) || 465;
+      await updateSetting('smtp_port', String(portNum), tenantId);
+    }
+    if (smtp_secure !== undefined) {
+      await updateSetting('smtp_secure', smtp_secure ? '1' : '0', tenantId);
+    }
+    if (smtp_user !== undefined) {
+      await updateSetting('smtp_user', String(smtp_user).trim(), tenantId);
+    }
+    if (smtp_pass !== undefined) {
+      // 允许更新授权码（保留去除多余空格的纯净16位密钥）
+      await updateSetting('smtp_pass', String(smtp_pass).trim(), tenantId);
+    }
+    if (notify_email_to !== undefined) {
+      await updateSetting('notify_email_to', String(notify_email_to).trim(), tenantId);
+    }
+    if (smtp_timeout !== undefined) {
+      const timeoutSec = Math.max(5, Math.min(60, parseInt(String(smtp_timeout)) || 15));
+      await updateSetting('smtp_timeout', String(timeoutSec), tenantId);
     }
 
     const updated = await getSettings(tenantId);

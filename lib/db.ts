@@ -1327,6 +1327,15 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let printer_ticket_header = '';
   let printer_ticket_footer = '谢谢惠顾，欢迎再次光临！';
 
+  // 邮件通知 (QQ 邮箱 SMTP) 服务配置默认值
+  let smtp_host = process.env.SMTP_HOST || 'smtp.qq.com';
+  let smtp_port = Number(process.env.SMTP_PORT) || 465;
+  let smtp_secure = process.env.SMTP_SECURE === 'false' ? 0 : (smtp_port === 465 ? 1 : 0);
+  let smtp_user = process.env.SMTP_USER || '527194933@qq.com';
+  let smtp_pass = process.env.SMTP_PASS || 'rvlehugdnsmccajh';
+  let notify_email_to = process.env.NOTIFY_EMAIL_TO || '527194933@qq.com';
+  let smtp_timeout = 15; // 默认 15 秒 (跨国云平台推荐)
+
   for (const row of res.rows) {
     if (row.key === 'payment_qr_code') payment_qr_code = row.value || '';
     if (row.key === 'points_ratio') points_ratio = parseFloat(row.value) || 1;
@@ -1365,6 +1374,15 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'printer_copies') printer_copies = Math.min(3, Math.max(1, parseInt(row.value) || 1));
     if (row.key === 'printer_ticket_header') printer_ticket_header = row.value || '';
     if (row.key === 'printer_ticket_footer') printer_ticket_footer = row.value ?? '谢谢惠顾，欢迎再次光临！';
+
+    // 邮件通知 (QQ 邮箱 SMTP) 服务配置键值
+    if (row.key === 'smtp_host' && row.value?.trim()) smtp_host = row.value.trim();
+    if (row.key === 'smtp_port') smtp_port = Number(row.value) || 465;
+    if (row.key === 'smtp_secure') smtp_secure = row.value === '0' ? 0 : 1;
+    if (row.key === 'smtp_user' && row.value?.trim()) smtp_user = row.value.trim();
+    if (row.key === 'smtp_pass' && row.value?.trim()) smtp_pass = row.value.trim();
+    if (row.key === 'notify_email_to' && row.value?.trim()) notify_email_to = row.value.trim();
+    if (row.key === 'smtp_timeout') smtp_timeout = Math.max(5, Math.min(60, Number(row.value) || 15));
   }
 
   return {
@@ -1398,6 +1416,13 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     printer_copies,
     printer_ticket_header,
     printer_ticket_footer,
+    smtp_host,
+    smtp_port,
+    smtp_secure,
+    smtp_user,
+    smtp_pass,
+    notify_email_to,
+    smtp_timeout,
   };
 }
 

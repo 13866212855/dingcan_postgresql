@@ -24,6 +24,16 @@ import {
   Brain,
   ArrowRight,
   Printer,
+  Activity,
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Check,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Zap,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -68,7 +78,22 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [testEmailLoading, setTestEmailLoading] = useState(false);
-  const [testEmailResult, setTestEmailResult] = useState<{ success?: boolean; text?: string } | null>(null);
+  const [testEmailResult, setTestEmailResult] = useState<{ success?: boolean; text?: string; diagnostics?: any } | null>(null);
+
+  // 邮件通知 (QQ 邮箱 SMTP) 服务配置状态
+  const [smtpHost, setSmtpHost] = useState('smtp.qq.com');
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [smtpSecure, setSmtpSecure] = useState(true);
+  const [smtpUser, setSmtpUser] = useState('527194933@qq.com');
+  const [smtpPass, setSmtpPass] = useState('rvlehugdnsmccajh');
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [notifyEmailTo, setNotifyEmailTo] = useState('527194933@qq.com');
+  const [smtpTimeout, setSmtpTimeout] = useState(15);
+  const [diagnosingEmail, setDiagnosingEmail] = useState(false);
+  const [diagnosticReport, setDiagnosticReport] = useState<any>(null);
+  const [showDiagnosticSection, setShowDiagnosticSection] = useState(false);
+  const [showOverseasGuide, setShowOverseasGuide] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -100,6 +125,14 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           setPrinterCopies(data.data.printer_copies ?? 1);
           setPrinterTicketHeader(data.data.printer_ticket_header || '');
           setPrinterTicketFooter(data.data.printer_ticket_footer ?? '谢谢惠顾，欢迎再次光临！');
+          // SMTP 邮件配置加载
+          if (data.data.smtp_host) setSmtpHost(data.data.smtp_host);
+          if (data.data.smtp_port) setSmtpPort(Number(data.data.smtp_port) || 465);
+          if (data.data.smtp_secure !== undefined) setSmtpSecure(data.data.smtp_secure === 1);
+          if (data.data.smtp_user) setSmtpUser(data.data.smtp_user);
+          if (data.data.smtp_pass) setSmtpPass(data.data.smtp_pass);
+          if (data.data.notify_email_to) setNotifyEmailTo(data.data.notify_email_to);
+          if (data.data.smtp_timeout) setSmtpTimeout(Number(data.data.smtp_timeout) || 15);
         }
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -239,21 +272,87 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
     setTestEmailLoading(true);
     setTestEmailResult(null);
     try {
-      const res = await fetch('/api/email/test', {
+      const res = await fetch(`/api/email/test?tenant=${encodeURIComponent(tenantId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toEmail: '527194933@qq.com' }),
+        body: JSON.stringify({
+          action: 'send',
+          toEmail: notifyEmailTo.trim() || '527194933@qq.com',
+          customConfig: {
+            host: smtpHost.trim(),
+            port: Number(smtpPort) || 465,
+            secure: smtpSecure,
+            user: smtpUser.trim(),
+            pass: smtpPass.trim(),
+            timeout: Number(smtpTimeout) || 15,
+            notifyTo: notifyEmailTo.trim(),
+          },
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        setTestEmailResult({ success: true, text: '✔ 测试邮件已成功发送至 527194933@qq.com，请查收！' });
+        setTestEmailResult({
+          success: true,
+          text: `✔ 测试邮件已成功送达至 ${notifyEmailTo.trim() || '527194933@qq.com'}（Message ID: ${data.messageId || 'ok'}），请打开邮箱查收！`,
+        });
       } else {
-        setTestEmailResult({ success: false, text: '❌ 发送失败：' + (data.error || '未知原因') });
+        setTestEmailResult({
+          success: false,
+          text: '❌ 发送失败：' + (data.error || '未知原因'),
+          diagnostics: data.diagnostics,
+        });
       }
     } catch (e: any) {
-      setTestEmailResult({ success: false, text: '❌ 发送异常：' + (e.message || '网络连接错误') });
+      setTestEmailResult({
+        success: false,
+        text: '❌ 发送异常：' + (e.message || '网络连接超时'),
+      });
     } finally {
       setTestEmailLoading(false);
+    }
+  };
+
+  const handleDiagnoseEmail = async () => {
+    setDiagnosingEmail(true);
+    setDiagnosticReport(null);
+    setShowDiagnosticSection(true);
+    try {
+      const res = await fetch(`/api/email/test?tenant=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'diagnose',
+          customConfig: {
+            host: smtpHost.trim(),
+            port: Number(smtpPort) || 465,
+            secure: smtpSecure,
+            user: smtpUser.trim(),
+            pass: smtpPass.trim(),
+            timeout: Number(smtpTimeout) || 15,
+            notifyTo: notifyEmailTo.trim(),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.data) {
+        setDiagnosticReport(data.data);
+      } else {
+        setDiagnosticReport({
+          overallStatus: 'failed',
+          summary: data.error || '体检诊断服务接口调用失败',
+          steps: [],
+          recommendations: ['请检查网络连接或稍后重试'],
+        });
+      }
+    } catch (e: any) {
+      setDiagnosticReport({
+        overallStatus: 'failed',
+        summary: e.message || '网络请求超时',
+        steps: [],
+        recommendations: ['无法连通诊断服务，请检查网络'],
+      });
+    } finally {
+      setDiagnosingEmail(false);
     }
   };
 
@@ -287,6 +386,13 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           printer_copies: printerCopies,
           printer_ticket_header: printerTicketHeader.trim(),
           printer_ticket_footer: printerTicketFooter.trim(),
+          smtp_host: smtpHost.trim(),
+          smtp_port: Number(smtpPort) || 465,
+          smtp_secure: smtpSecure ? 1 : 0,
+          smtp_user: smtpUser.trim(),
+          smtp_pass: smtpPass.trim(),
+          notify_email_to: notifyEmailTo.trim(),
+          smtp_timeout: Number(smtpTimeout) || 15,
           tenantId,
         }),
       });
@@ -871,15 +977,18 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
         </div>
 
         {/* Email Notification Service (QQ Mail SMTP) */}
-        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Mail className="w-5 h-5 text-emerald-600" />
-              <h3 className="text-sm font-bold text-neutral-900">邮件实时服务通知（QQ 邮箱 SMTP）</h3>
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900">邮件实时服务通知（QQ 邮箱 SMTP）</h3>
+                <p className="text-[11px] text-neutral-400">客户完成扫码支付或新单提醒时，自动发送订单客户详单至指定邮箱</p>
+              </div>
             </div>
             <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center space-x-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>服务已就绪</span>
+              <span>服务集成</span>
             </span>
           </div>
 
@@ -887,49 +996,408 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
             当顾客在手机端扫码结账并点击<strong>【我已完成扫码支付】</strong>时，系统会自动向预设邮箱发送一份完整的订单客户详单（包含桌号/外卖地址、菜品清单、口味要求、实付金额与付款时间戳）。
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 text-xs space-y-1">
-              <div className="text-neutral-400 font-medium">通知接收目标邮箱</div>
-              <div className="text-sm font-mono font-bold text-neutral-800">527194933@qq.com</div>
-              <div className="text-[11px] text-emerald-600 font-medium">✔ 客户点击支付后即刻秒级送达</div>
+          {/* SMTP 服务器与端口设置 */}
+          <div className="p-4 bg-neutral-50/70 border border-neutral-200 rounded-xl space-y-4">
+            <div className="text-xs font-bold text-neutral-800 flex items-center justify-between">
+              <span className="flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>SMTP 发信服务与安全配置</span>
+              </span>
+              <span className="text-[11px] font-normal text-neutral-400">
+                支持直接在后台修改或通过环境变量配置
+              </span>
             </div>
 
-            <div className="p-3.5 bg-neutral-50 rounded-xl border border-neutral-200 text-xs space-y-1">
-              <div className="text-neutral-400 font-medium">SMTP 发信服务器与安全授权</div>
-              <div className="text-sm font-mono font-bold text-neutral-800">smtp.qq.com (SSL: 465)</div>
-              <div className="text-[11px] text-neutral-500">已启用授权码安全验证 · 发件身份保护</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 发信服务器 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-neutral-700">
+                  SMTP 发信服务器主机
+                </label>
+                <input
+                  type="text"
+                  value={smtpHost}
+                  onChange={(e) => setSmtpHost(e.target.value)}
+                  placeholder="smtp.qq.com"
+                  className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-[10px] text-neutral-400">QQ 邮箱默认发信服务器为 smtp.qq.com</p>
+              </div>
+
+              {/* 端口与加密方式切换 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-neutral-700">
+                  发信端口与加密通道
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSmtpPort(465);
+                      setSmtpSecure(true);
+                    }}
+                    className={`px-3 py-2 text-xs rounded-xl border text-left transition-all cursor-pointer ${
+                      smtpPort === 465 && smtpSecure
+                        ? 'border-emerald-500 bg-emerald-50/60 text-emerald-950 font-bold ring-1 ring-emerald-500/30'
+                        : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-600'
+                    }`}
+                  >
+                    <div>465 (SSL 强加密)</div>
+                    <div className="text-[10px] text-neutral-400 font-normal mt-0.5">常规与境内推荐</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSmtpPort(587);
+                      setSmtpSecure(false);
+                    }}
+                    className={`px-3 py-2 text-xs rounded-xl border text-left transition-all cursor-pointer ${
+                      smtpPort === 587 && !smtpSecure
+                        ? 'border-emerald-500 bg-emerald-50/60 text-emerald-950 font-bold ring-1 ring-emerald-500/30'
+                        : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-600'
+                    }`}
+                  >
+                    <div>587 (STARTTLS)</div>
+                    <div className="text-[10px] text-neutral-400 font-normal mt-0.5">Render/海外云推荐</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* 发件 QQ 邮箱账号 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-neutral-700">
+                  发件人 QQ 邮箱账号 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={smtpUser}
+                  onChange={(e) => setSmtpUser(e.target.value.trim())}
+                  placeholder="527194933@qq.com"
+                  className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-[10px] text-neutral-400">用于作为发件方登录并派发订单邮件</p>
+              </div>
+
+              {/* QQ 邮箱 16 位 SMTP 独立授权码 */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-neutral-700">
+                    QQ 邮箱 16位 SMTP 独立授权码 <span className="text-rose-500">*</span>
+                  </label>
+                  {smtpPass ? (
+                    /^[a-z]{16}$/i.test(smtpPass) ? (
+                      <span className="text-[10px] text-emerald-600 font-medium">✔ 16位有效格式</span>
+                    ) : (
+                      <span className="text-[10px] text-amber-600 font-medium">⚠ 非16位纯英文字母</span>
+                    )
+                  ) : (
+                    <span className="text-[10px] text-rose-500 font-medium">必填</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showSmtpPass ? 'text' : 'password'}
+                    value={smtpPass}
+                    onChange={(e) => setSmtpPass(e.target.value.trim())}
+                    placeholder="例如: rvlehugdnsmccajh"
+                    className="w-full pl-3.5 pr-10 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSmtpPass(!showSmtpPass)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 p-1 cursor-pointer"
+                  >
+                    {showSmtpPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-neutral-400">
+                  注意：切勿使用 QQ 登录密码！需在 QQ 邮箱网页端【设置-账户】中生成的 16 位独立授权码
+                </p>
+              </div>
+
+              {/* 通知接收目标邮箱 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-neutral-700">
+                  通知接收目标邮箱 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={notifyEmailTo}
+                  onChange={(e) => setNotifyEmailTo(e.target.value.trim())}
+                  placeholder="527194933@qq.com"
+                  className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                />
+                <p className="text-[10px] text-neutral-400">接收新订单支付详单的收件人邮箱</p>
+              </div>
+
+              {/* 跨国公网连接超时控制 */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-neutral-700">
+                  网络握手连接超时 (秒)
+                </label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="number"
+                    min={5}
+                    max={60}
+                    value={smtpTimeout}
+                    onChange={(e) => setSmtpTimeout(Number(e.target.value) || 15)}
+                    className="w-28 px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <span className="text-xs text-neutral-500">秒</span>
+                  <span className="text-[10px] text-neutral-400 ml-2">
+                    (Render / AWS 等境外机房跨国延迟较高，推荐保持 15-20 秒)
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Test Email Action Button */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5">
-            <div className="text-xs text-emerald-900">
-              <span className="font-bold">邮箱连通性自检：</span>
-              <span>可随时发送一封模拟测试详单邮件至 527194933@qq.com 验证收信效果。</span>
+          {/* 连通性自检与体检按钮操作条 */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1 bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4">
+            <div className="text-xs text-emerald-950 space-y-0.5">
+              <div className="font-bold flex items-center space-x-1.5">
+                <Activity className="w-3.5 h-3.5 text-emerald-700" />
+                <span>网络与 SMTP 联通性双重诊断：</span>
+              </div>
+              <p className="text-[11px] text-emerald-800">
+                支持一键全项体检探测 DNS、465/587 端口与授权码握手，或直接发送真实模拟订单测试邮件。
+              </p>
             </div>
-            <button
-              type="button"
-              disabled={testEmailLoading}
-              onClick={handleTestEmail}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all active:scale-98 flex items-center space-x-1.5 shrink-0 disabled:opacity-60"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>{testEmailLoading ? '正在发送测试邮件...' : '发送一封测试详单邮件'}</span>
-            </button>
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                type="button"
+                disabled={diagnosingEmail}
+                onClick={handleDiagnoseEmail}
+                className="px-3.5 py-2 bg-white hover:bg-neutral-50 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-300 shadow-2xs transition-all active:scale-98 flex items-center space-x-1.5 disabled:opacity-60 cursor-pointer"
+              >
+                <Activity className={`w-3.5 h-3.5 text-emerald-600 ${diagnosingEmail ? 'animate-spin' : ''}`} />
+                <span>{diagnosingEmail ? '正在诊断网络...' : '全项网络体检'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={testEmailLoading}
+                onClick={handleTestEmail}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all active:scale-98 flex items-center space-x-1.5 disabled:opacity-60 cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{testEmailLoading ? '正在发送测试邮件...' : '发送测试详单邮件'}</span>
+              </button>
+            </div>
           </div>
 
+          {/* 测试发信即时反馈信息条 */}
           {testEmailResult && (
             <div
-              className={`p-3 rounded-xl text-xs font-medium ${
+              className={`p-4 rounded-xl text-xs space-y-1.5 ${
                 testEmailResult.success
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   : 'bg-rose-50 text-rose-800 border border-rose-200'
               }`}
             >
-              {testEmailResult.text}
+              <div className="font-bold flex items-center space-x-1.5">
+                {testEmailResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{testEmailResult.text}</span>
+              </div>
+              {testEmailResult.diagnostics?.solution && (
+                <div className="p-2.5 bg-white/80 rounded-lg text-[11px] text-rose-900 leading-relaxed border border-rose-200/60 mt-1">
+                  <strong>建议排查方案：</strong>
+                  <span>{testEmailResult.diagnostics.solution}</span>
+                  {testEmailResult.diagnostics.category === 'TIMEOUT' && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSmtpPort(587);
+                          setSmtpSecure(false);
+                          setSmtpTimeout(20);
+                        }}
+                        className="px-2.5 py-1 bg-emerald-700 text-white font-bold text-[11px] rounded-lg hover:bg-emerald-800 cursor-pointer"
+                      >
+                        ⚡ 一键切换为 587 端口 (STARTTLS)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
+          {/* 全项体检诊断报告展开卡片 */}
+          {showDiagnosticSection && diagnosticReport && (
+            <div className="bg-neutral-900 text-white rounded-xl p-4.5 space-y-4 border border-neutral-700 shadow-md">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-white">SMTP 与公网网络体检诊断报告</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      diagnosticReport.overallStatus === 'passed'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : diagnosticReport.overallStatus === 'warning'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                    }`}
+                  >
+                    {diagnosticReport.overallStatus === 'passed'
+                      ? '✔ 全部体检项通过'
+                      : diagnosticReport.overallStatus === 'warning'
+                      ? '⚠ 存在网络警告'
+                      : '❌ 检测到连接异常'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnosticSection(false)}
+                    className="text-neutral-400 hover:text-white text-xs cursor-pointer px-1.5 py-0.5"
+                  >
+                    收起
+                  </button>
+                </div>
+              </div>
+
+              {/* 核心结论 */}
+              <div className="text-xs text-neutral-300 bg-neutral-800/80 p-3 rounded-lg border border-neutral-700 leading-relaxed">
+                <strong>综合诊断结论：</strong> {diagnosticReport.summary}
+              </div>
+
+              {/* 检查步进清单 */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-neutral-400">检测项执行明细：</div>
+                {(diagnosticReport.steps || []).map((step: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="p-2.5 rounded-lg bg-neutral-800/50 border border-neutral-700/60 flex items-start space-x-2.5 text-xs"
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {step.status === 'success' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                      {step.status === 'warning' && <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}
+                      {step.status === 'error' && <AlertCircle className="w-3.5 h-3.5 text-rose-400" />}
+                    </div>
+                    <div className="flex-1 space-y-0.5">
+                      <div className="font-bold text-white flex items-center justify-between">
+                        <span>{step.title}</span>
+                        {step.durationMs !== undefined && (
+                          <span className="text-[10px] text-neutral-400 font-mono">{step.durationMs}ms</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-neutral-300">{step.details}</div>
+                      {step.solution && (
+                        <div className="text-[11px] text-amber-300 bg-amber-950/30 p-1.5 rounded mt-1 border border-amber-900/40">
+                          {step.solution}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 针对当前体检的排查指导 */}
+              {diagnosticReport.recommendations?.length > 0 && (
+                <div className="bg-emerald-950/20 border border-emerald-900/50 p-3 rounded-lg space-y-1.5 text-xs text-neutral-300">
+                  <div className="font-bold text-emerald-400 flex items-center space-x-1">
+                    <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>针对当前公网环境的精准优化建议：</span>
+                  </div>
+                  <ul className="list-disc pl-4 space-y-1 text-[11px] text-neutral-300">
+                    {diagnosticReport.recommendations.map((rec: string, rIdx: number) => (
+                      <li key={rIdx}>{rec}</li>
+                    ))}
+                  </ul>
+                  {diagnosticReport.steps?.some((s: any) => s.name === 'port_465_tcp' && s.status === 'error') &&
+                    diagnosticReport.steps?.some((s: any) => s.name === 'port_587_tcp' && s.status === 'success') && (
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSmtpPort(587);
+                            setSmtpSecure(false);
+                            setSmtpTimeout(20);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-all cursor-pointer"
+                        >
+                          ⚡ 立即将发信端口切换为 587 (STARTTLS)
+                        </button>
+                      </div>
+                    )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 生产环境 (Render / 海外云平台) 深度排查指南折叠卡片 */}
+          <div className="bg-neutral-50 border border-neutral-200 rounded-xl overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => setShowOverseasGuide(!showOverseasGuide)}
+              className="w-full p-3.5 flex items-center justify-between text-left hover:bg-neutral-100/70 transition-all cursor-pointer"
+            >
+              <div className="flex items-center space-x-2 font-bold text-neutral-800">
+                <HelpCircle className="w-4 h-4 text-emerald-600" />
+                <span>为什么上线 Render / 海外云平台后发邮件会提示 Connection timeout？</span>
+              </div>
+              <div className="text-neutral-400 flex items-center space-x-1 text-xs">
+                <span>{showOverseasGuide ? '收起排查指南' : '查看排查与配置指南'}</span>
+                {showOverseasGuide ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
+            </button>
+
+            {showOverseasGuide && (
+              <div className="p-4 pt-1 border-t border-neutral-200/80 space-y-3 text-[11px] text-neutral-600 leading-relaxed">
+                <div>
+                  <strong className="text-neutral-800">1. 原因分析：为什么海外云平台连接 QQ 邮箱会超时？</strong>
+                  <p className="mt-0.5">
+                    Render 的服务器位于 AWS 俄勒冈（美国西海岸）或法兰克福（欧洲），连接中国境内的 QQ 邮箱服务器（<code className="text-neutral-800 bg-neutral-200/60 px-1 py-0.5 rounded">smtp.qq.com</code>）需跨越大洋骨干网络。AWS 与 Render 云防火墙通常对 25 端口彻底封禁，并对 465 端口进行严格流量嗅探。当网络发生抖动或丢包时，TCP/TLS 握手常需耗费 6~12 秒。如果连接超时设置过低，Node.js 就会立即抛出 <code className="text-rose-600 bg-rose-50 px-1 py-0.5 rounded font-mono font-bold">Connection timeout</code>。
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-neutral-800">2. 推荐解决方案 A：在上方切换为 587 端口 (STARTTLS)</strong>
+                  <p className="mt-0.5">
+                    在上方表单中点击切换为<strong>【587 (STARTTLS)】</strong>并点击底部的【保存全部配置】。587 端口走标准 Submission 协议，能顺畅穿透大部分境外机房出站安全组，实测在海外机房表现远优于 465 端口。
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-neutral-800">3. 推荐解决方案 B：在 Render 后台直接配置环境变量</strong>
+                  <p className="mt-0.5">
+                    登录 <a href="https://dashboard.render.com" target="_blank" rel="noreferrer" className="text-emerald-700 font-bold underline">Render Dashboard</a>，进入您的 Web Service，点击左侧菜单的 <strong>Environment</strong>，确保添加如下配置：
+                  </p>
+                  <div className="p-2.5 bg-neutral-900 text-neutral-200 rounded-lg font-mono text-[11px] space-y-1 mt-1">
+                    <div>SMTP_HOST = smtp.qq.com</div>
+                    <div>SMTP_PORT = 465 (或 587)</div>
+                    <div>SMTP_USER = 527194933@qq.com</div>
+                    <div>SMTP_PASS = rvlehugdnsmccajh (您的16位授权码)</div>
+                    <div>NOTIFY_EMAIL_TO = 527194933@qq.com</div>
+                  </div>
+                </div>
+
+                <div>
+                  <strong className="text-neutral-800">4. QQ 邮箱独立授权码获取与异地登录防风控指南：</strong>
+                  <ul className="list-disc pl-4 space-y-1 mt-1">
+                    <li>
+                      <strong>切勿使用 QQ 密码</strong>：QQ 邮箱必须使用生成的 16 位独立授权码（全英文小写，无空格）。
+                    </li>
+                    <li>
+                      <strong>获取路径</strong>：电脑浏览器登录 <a href="https://mail.qq.com" target="_blank" rel="noreferrer" className="text-emerald-700 underline font-bold">mail.qq.com</a> → 顶部【设置】→【账户】→ 向下滚动找到【POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务】→ 确认【POP3/SMTP服务】为已开启状态 → 点击【生成授权码】。
+                    </li>
+                    <li>
+                      <strong>异地登录安全放行</strong>：由于 Render 服务器在海外，首次连接时 QQ 邮箱可能会向您的 QQ 微信安全中心发送一条“异地登录拦截提醒”，请在手机上点击“是我本人操作/信任该设备”即可解除拦截。
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
 
         {/* 云打印机对接与自动出单模块 */}
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">

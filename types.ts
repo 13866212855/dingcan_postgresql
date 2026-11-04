@@ -136,6 +136,14 @@ export interface AppSettings {
   printer_copies?: number; // 打印联数 (1-3联，默认1)
   printer_ticket_header?: string; // 小票抬头（默认使用店面名称）
   printer_ticket_footer?: string; // 小票底部寄语 (如: 谢谢惠顾，欢迎再次光临！)
+  // 邮件通知 (QQ 邮箱 SMTP) 服务配置
+  smtp_host?: string; // SMTP 发信服务器，默认 smtp.qq.com
+  smtp_port?: number; // SMTP 端口，默认 465 (备用 587)
+  smtp_secure?: number; // 加密方式: 1=SSL/TLS(465), 0=STARTTLS(587)
+  smtp_user?: string; // 发信 QQ 邮箱账号，默认 527194933@qq.com
+  smtp_pass?: string; // QQ 邮箱 16 位 SMTP 独立授权码 (如: rvlehugdnsmccajh)
+  notify_email_to?: string; // 接收订单通知的目标邮箱，默认 527194933@qq.com
+  smtp_timeout?: number; // 网络连接超时（秒），默认 15 秒
 }
 
 export interface LLMConfig {
