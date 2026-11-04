@@ -3,23 +3,31 @@ import { Order } from '@/types';
 
 let transporterInstance: Transporter | null = null;
 
+export function createTransporter(config?: { port?: number; secure?: boolean }): Transporter {
+  const host = process.env.SMTP_HOST || 'smtp.qq.com';
+  const defaultPort = Number(process.env.SMTP_PORT) || 465;
+  const port = config?.port ?? defaultPort;
+  const secure = config?.secure ?? (port === 465);
+  const user = process.env.SMTP_USER || '527194933@qq.com';
+  const pass = process.env.SMTP_PASS || 'rvlehugdnsmccajh';
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass,
+    },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000,
+  });
+}
+
 export function getTransporter(): Transporter {
   if (!transporterInstance) {
-    const host = process.env.SMTP_HOST || 'smtp.qq.com';
-    const port = Number(process.env.SMTP_PORT) || 465;
-    const secure = process.env.SMTP_SECURE !== 'false';
-    const user = process.env.SMTP_USER || '527194933@qq.com';
-    const pass = process.env.SMTP_PASS || 'rvlehugdnsmccajh';
-
-    transporterInstance = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: {
-        user,
-        pass,
-      },
-    });
+    transporterInstance = createTransporter();
   }
   return transporterInstance;
 }
@@ -281,13 +289,32 @@ export async function sendOrderPaymentEmail(
   `;
 
   try {
-    const transporter = getTransporter();
-    const info = await transporter.sendMail({
-      from: `"${shopName}订单通知" <${userEmail}>`,
-      to: targetEmail,
-      subject,
-      html: htmlContent,
-    });
+    let info;
+    try {
+      const transporter = getTransporter();
+      info = await transporter.sendMail({
+        from: `"${shopName}订单通知" <${userEmail}>`,
+        to: targetEmail,
+        subject,
+        html: htmlContent,
+      });
+    } catch (primaryError: any) {
+      // 若处于境外云主机环境（如 Render / AWS / GCP），宿主机云防火墙可能限制 465 端口出站导致 Connection timeout
+      // 此时自动降级尝试 587 端口 (STARTTLS)，保障跨国邮件畅通
+      const errMsg = String(primaryError?.message || '');
+      if (errMsg.includes('timeout') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNREFUSED')) {
+        console.warn('[Email Notice] 465端口连接超时，正自动切换至 587 端口重试...');
+        const fallbackTransporter = createTransporter({ port: 587, secure: false });
+        info = await fallbackTransporter.sendMail({
+          from: `"${shopName}订单通知" <${userEmail}>`,
+          to: targetEmail,
+          subject,
+          html: htmlContent,
+        });
+      } else {
+        throw primaryError;
+      }
+    }
 
     console.log(`[Email Notice] 成功向 ${targetEmail} 发送订单支付详单 (Message ID: ${info.messageId})`);
     sentOrderEmailTimestamps.set(cacheKey, now);

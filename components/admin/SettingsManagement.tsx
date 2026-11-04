@@ -23,6 +23,7 @@ import {
   Send,
   Brain,
   ArrowRight,
+  Printer,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -44,6 +45,20 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   // 支付付款时机配置 (餐前付款 / 餐后结账)
   const [enablePayBefore, setEnablePayBefore] = useState(true);
   const [enablePayAfter, setEnablePayAfter] = useState(true);
+
+  // 云打印机对接配置
+  const [autoPrintEnabled, setAutoPrintEnabled] = useState(false);
+  const [printerType, setPrinterType] = useState<'webhook' | 'feie' | 'yilianyun'>('webhook');
+  const [printerName, setPrinterName] = useState('');
+  const [printerSn, setPrinterSn] = useState('');
+  const [printerKey, setPrinterKey] = useState('');
+  const [printerWebhookUrl, setPrinterWebhookUrl] = useState('');
+  const [printerSecretToken, setPrinterSecretToken] = useState('');
+  const [printerCopies, setPrinterCopies] = useState(1);
+  const [printerTicketHeader, setPrinterTicketHeader] = useState('');
+  const [printerTicketFooter, setPrinterTicketFooter] = useState('');
+  const [testPrintLoading, setTestPrintLoading] = useState(false);
+  const [testPrintResult, setTestPrintResult] = useState<{ success?: boolean; text?: string } | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -74,6 +89,17 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           }
           setEnablePayBefore(data.data.enable_pay_before !== 0);
           setEnablePayAfter(data.data.enable_pay_after !== 0);
+          // 打印配置加载
+          setAutoPrintEnabled(data.data.auto_print_enabled === 1);
+          if (data.data.printer_type) setPrinterType(data.data.printer_type);
+          setPrinterName(data.data.printer_name || '');
+          setPrinterSn(data.data.printer_sn || '');
+          setPrinterKey(data.data.printer_key || '');
+          setPrinterWebhookUrl(data.data.printer_webhook_url || '');
+          setPrinterSecretToken(data.data.printer_secret_token || '');
+          setPrinterCopies(data.data.printer_copies ?? 1);
+          setPrinterTicketHeader(data.data.printer_ticket_header || '');
+          setPrinterTicketFooter(data.data.printer_ticket_footer ?? '谢谢惠顾，欢迎再次光临！');
         }
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -166,6 +192,49 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
     }
   };
 
+  const handleTestPrint = async () => {
+    setTestPrintLoading(true);
+    setTestPrintResult(null);
+    try {
+      const res = await fetch(`/api/printer/test?tenant=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customSettings: {
+            printer_type: printerType,
+            printer_name: printerName.trim(),
+            printer_sn: printerSn.trim(),
+            printer_key: printerKey.trim(),
+            printer_webhook_url: printerWebhookUrl.trim(),
+            printer_secret_token: printerSecretToken.trim(),
+            printer_copies: printerCopies,
+            printer_ticket_header: printerTicketHeader.trim(),
+            printer_ticket_footer: printerTicketFooter.trim(),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestPrintResult({
+          success: true,
+          text: `✔ ${data.message || '测试小票指令已成功推送至云打印机/接口！'}`,
+        });
+      } else {
+        setTestPrintResult({
+          success: false,
+          text: '❌ 打印推送失败：' + (data.error || '请检查打印机设备ID、API密钥或网络'),
+        });
+      }
+    } catch (e: any) {
+      setTestPrintResult({
+        success: false,
+        text: '❌ 打印异常：' + (e.message || '网络连接超时'),
+      });
+    } finally {
+      setTestPrintLoading(false);
+    }
+  };
+
   const handleTestEmail = async () => {
     setTestEmailLoading(true);
     setTestEmailResult(null);
@@ -208,6 +277,16 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           table_input_mode: tableInputMode,
           enable_pay_before: enablePayBefore ? 1 : 0,
           enable_pay_after: enablePayAfter ? 1 : 0,
+          auto_print_enabled: autoPrintEnabled ? 1 : 0,
+          printer_type: printerType,
+          printer_name: printerName.trim(),
+          printer_sn: printerSn.trim(),
+          printer_key: printerKey.trim(),
+          printer_webhook_url: printerWebhookUrl.trim(),
+          printer_secret_token: printerSecretToken.trim(),
+          printer_copies: printerCopies,
+          printer_ticket_header: printerTicketHeader.trim(),
+          printer_ticket_footer: printerTicketFooter.trim(),
           tenantId,
         }),
       });
@@ -848,6 +927,188 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               }`}
             >
               {testEmailResult.text}
+            </div>
+          )}
+        </div>
+
+        {/* 云打印机对接与自动出单模块 */}
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Printer className="w-5 h-5 text-amber-600" />
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900">云打印机对接与自动出单</h3>
+                <p className="text-[11px] text-neutral-400">支持接入云打印机 (飞鹅/易联云) 或企业级自定义 Webhook 打印服务</p>
+              </div>
+            </div>
+            <label className="flex items-center space-x-2 cursor-pointer select-none">
+              <span className="text-xs font-bold text-neutral-700">自动打印</span>
+              <input
+                type="checkbox"
+                checked={autoPrintEnabled}
+                onChange={(e) => setAutoPrintEnabled(e.target.checked)}
+                className="w-4 h-4 rounded-sm text-amber-600 focus:ring-amber-500 border-neutral-300"
+              />
+            </label>
+          </div>
+
+          <p className="text-xs text-neutral-500 leading-relaxed">
+            启用后，当顾客提交订单或订单状态变为<strong>【待处理】</strong>时，系统将自动向所绑定的云打印机或 Webhook 服务推送标准小票格式，完成自动后厨与前台出单。
+          </p>
+
+          {/* 打印机服务类型选择 */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-neutral-700">
+              打印对接协议 / 服务类型
+            </label>
+            <div className="grid grid-cols-3 gap-2.5">
+              {[
+                { id: 'webhook', label: '自定义 Webhook', desc: '局域网/自建小票服务' },
+                { id: 'feie', label: '飞鹅云打印机', desc: 'FeieYun 云打印开放平台' },
+                { id: 'yilianyun', label: '易联云打印机', desc: 'YiLianYun 开放平台' },
+              ].map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => setPrinterType(item.id as any)}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    printerType === item.id
+                      ? 'border-amber-500 bg-amber-50/40 text-amber-950 ring-1 ring-amber-500/30'
+                      : 'border-neutral-200 bg-neutral-50/50 hover:bg-neutral-100 text-neutral-700'
+                  }`}
+                >
+                  <div className="text-xs font-bold">{item.label}</div>
+                  <div className="text-[10px] text-neutral-400 mt-0.5">{item.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 核心凭据：API Key 与 设备 ID (SN) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-neutral-700">
+                云打印机设备 ID (SN 码 / 终端号) <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={printerSn}
+                onChange={(e) => setPrinterSn(e.target.value)}
+                placeholder="例如: 917500123 或 打印机底座SN码"
+                className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50/50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+              />
+              <p className="text-[10px] text-neutral-400">印在打印机机身底部的唯一样机编号 (Device ID)</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-neutral-700">
+                云打印机 API Key / 设备密钥 (KEY) <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="password"
+                value={printerKey}
+                onChange={(e) => setPrinterKey(e.target.value)}
+                placeholder="例如: 填写平台分配的 API Key 或设备密钥"
+                className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50/50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white"
+              />
+              <p className="text-[10px] text-neutral-400">云打印开放平台授权访问密钥 (UKEY / AppKey / 打印机KEY)</p>
+            </div>
+          </div>
+
+          {/* Webhook 专属地址与Token输入框 */}
+          {printerType === 'webhook' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3.5 bg-neutral-50/80 rounded-xl border border-neutral-200">
+              <div className="space-y-1 md:col-span-2">
+                <label className="block text-xs font-bold text-neutral-700">
+                  Webhook 打印接口 URL (POST 请求) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={printerWebhookUrl}
+                  onChange={(e) => setPrinterWebhookUrl(e.target.value)}
+                  placeholder="https://your-print-server.example.com/api/print"
+                  className="w-full px-3.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-neutral-700">
+                  Bearer Token / 自定义密钥 (选填)
+                </label>
+                <input
+                  type="password"
+                  value={printerSecretToken}
+                  onChange={(e) => setPrinterSecretToken(e.target.value)}
+                  placeholder="Authorization: Bearer <token>"
+                  className="w-full px-3.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-neutral-700">
+                  打印联数
+                </label>
+                <select
+                  value={printerCopies}
+                  onChange={(e) => setPrinterCopies(Number(e.target.value) || 1)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value={1}>1 联 (一单一打)</option>
+                  <option value={2}>2 联 (前台+后厨双联)</option>
+                  <option value={3}>3 联 (客户联+留存联+后厨联)</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* 小票个性化抬头与底部寄语 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-neutral-700">小票自定义抬头 (选填)</label>
+              <input
+                type="text"
+                value={printerTicketHeader}
+                onChange={(e) => setPrinterTicketHeader(e.target.value)}
+                placeholder="默认使用店面名称"
+                className="w-full px-3.5 py-2 text-xs bg-neutral-50/50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-neutral-700">小票底部寄语 (选填)</label>
+              <input
+                type="text"
+                value={printerTicketFooter}
+                onChange={(e) => setPrinterTicketFooter(e.target.value)}
+                placeholder="谢谢惠顾，欢迎再次光临！"
+                className="w-full px-3.5 py-2 text-xs bg-neutral-50/50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+          </div>
+
+          {/* 测试打印操作条 */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 bg-amber-50/50 border border-amber-200/70 rounded-xl p-3.5">
+            <div className="text-xs text-amber-900">
+              <span className="font-bold">云打印机联调自检：</span>
+              <span>可随时发送一封模拟测试小票指令到指定设备 ID / 接口验证出单效果。</span>
+            </div>
+            <button
+              type="button"
+              disabled={testPrintLoading}
+              onClick={handleTestPrint}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center space-x-1.5 shrink-0 disabled:opacity-60 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>{testPrintLoading ? '正在发送测试小票...' : '测试打印'}</span>
+            </button>
+          </div>
+
+          {testPrintResult && (
+            <div
+              className={`p-3 rounded-xl text-xs font-medium ${
+                testPrintResult.success
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}
+            >
+              {testPrintResult.text}
             </div>
           )}
         </div>

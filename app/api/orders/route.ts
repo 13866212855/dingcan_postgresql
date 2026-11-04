@@ -3,6 +3,7 @@ import { getAllOrders, createOrder, getOrderById, getSettings, verifyStaffSessio
 import { getTenantIdFromRequest } from '@/lib/tenant';
 import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
+import { sendOrderToPrinter } from '@/lib/printer';
 
 export const dynamic = 'force-dynamic';
 
@@ -127,6 +128,22 @@ export async function POST(req: NextRequest) {
       ]);
     } catch (mailErr) {
       console.error('[Order Notice Email Error]', mailErr);
+    }
+
+    // 自动云打印：新订单状态为【待处理】，若开启了自动打印，自动通过 Webhook 或第三方云打印服务出单
+    try {
+      const printPromise = (async () => {
+        const fullOrder = await getOrderById(order.id, tenantId);
+        if (fullOrder) {
+          await sendOrderToPrinter(fullOrder, { tenantId });
+        }
+      })();
+      await Promise.race([
+        printPromise,
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
+    } catch (printErr) {
+      console.error('[Order Auto-Print Error]', printErr);
     }
 
     return NextResponse.json({
