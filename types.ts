@@ -125,6 +125,17 @@ export interface AppSettings {
   llm_auto_process_images?: number; // 开启上传大图自动智能处理与压缩优化: 1=开启, 0=关闭 (默认1)
   llm_max_image_dimension?: number; // 智能处理最大宽高尺寸限制（像素），默认1200
   llm_image_quality?: number; // 智能处理压缩画质 (1-100)，默认82
+  // 自动打印模块配置
+  auto_print_enabled?: number; // 开启自动打印: 1=开启, 0=关闭 (默认0)
+  printer_type?: 'webhook' | 'feie' | 'yilianyun'; // 打印机服务类型 ('webhook' | 'feie' | 'yilianyun')
+  printer_name?: string; // 打印机名称 (如: 前台58mm热敏收银机 / 后厨80mm出单机)
+  printer_sn?: string; // 打印机设备号 / 终端号 / SN 码
+  printer_key?: string; // 打印机密钥 (KEY / APPSECRET)
+  printer_webhook_url?: string; // Webhook / 打印服务接口地址 (HTTP/HTTPS POST)
+  printer_secret_token?: string; // Webhook 自定义 Bearer Token / 签名秘钥
+  printer_copies?: number; // 打印联数 (1-3联，默认1)
+  printer_ticket_header?: string; // 小票抬头（默认使用店面名称）
+  printer_ticket_footer?: string; // 小票底部寄语 (如: 谢谢惠顾，欢迎再次光临！)
 }
 
 export interface LLMConfig {

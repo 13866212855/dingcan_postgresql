@@ -1315,6 +1315,18 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let llm_max_image_dimension = 1200; // 默认最长边1200px
   let llm_image_quality = 82; // 默认WebP质量82
 
+  // 自动打印模块配置默认值
+  let auto_print_enabled = 0; // 默认关闭，需管理员绑定后开启
+  let printer_type: 'webhook' | 'feie' | 'yilianyun' = 'webhook';
+  let printer_name = '前台热敏云打印机';
+  let printer_sn = '';
+  let printer_key = '';
+  let printer_webhook_url = '';
+  let printer_secret_token = '';
+  let printer_copies = 1;
+  let printer_ticket_header = '';
+  let printer_ticket_footer = '谢谢惠顾，欢迎再次光临！';
+
   for (const row of res.rows) {
     if (row.key === 'payment_qr_code') payment_qr_code = row.value || '';
     if (row.key === 'points_ratio') points_ratio = parseFloat(row.value) || 1;
@@ -1339,6 +1351,20 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'llm_auto_process_images') llm_auto_process_images = row.value === '0' ? 0 : 1;
     if (row.key === 'llm_max_image_dimension') llm_max_image_dimension = parseInt(row.value) || 1200;
     if (row.key === 'llm_image_quality') llm_image_quality = parseInt(row.value) || 82;
+
+    // 自动打印模块配置键值
+    if (row.key === 'auto_print_enabled') auto_print_enabled = row.value === '1' ? 1 : 0;
+    if (row.key === 'printer_type' && (row.value === 'webhook' || row.value === 'feie' || row.value === 'yilianyun')) {
+      printer_type = row.value;
+    }
+    if (row.key === 'printer_name' && row.value?.trim()) printer_name = row.value.trim();
+    if (row.key === 'printer_sn') printer_sn = row.value || '';
+    if (row.key === 'printer_key') printer_key = row.value || '';
+    if (row.key === 'printer_webhook_url') printer_webhook_url = row.value || '';
+    if (row.key === 'printer_secret_token') printer_secret_token = row.value || '';
+    if (row.key === 'printer_copies') printer_copies = Math.min(3, Math.max(1, parseInt(row.value) || 1));
+    if (row.key === 'printer_ticket_header') printer_ticket_header = row.value || '';
+    if (row.key === 'printer_ticket_footer') printer_ticket_footer = row.value ?? '谢谢惠顾，欢迎再次光临！';
   }
 
   return {
@@ -1362,6 +1388,16 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     llm_auto_process_images,
     llm_max_image_dimension,
     llm_image_quality,
+    auto_print_enabled,
+    printer_type,
+    printer_name,
+    printer_sn,
+    printer_key,
+    printer_webhook_url,
+    printer_secret_token,
+    printer_copies,
+    printer_ticket_header,
+    printer_ticket_footer,
   };
 }
 

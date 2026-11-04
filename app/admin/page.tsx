@@ -370,6 +370,13 @@ export default function AdminPage() {
                 }).catch((e) => console.warn('[Admin Sound-Email Sync Notice]', e));
               });
 
+              // 自动打印协同：工作台新订单自动触发绑定的云打印机出单（内置60s防重）
+              brandNew.forEach((newOrder) => {
+                fetch(`/api/orders/${newOrder.id}/print?tenant=${encodeURIComponent(currentTenantId)}`, {
+                  method: 'POST',
+                }).catch((e) => console.warn('[Admin Auto-Print Sync Notice]', e));
+              });
+
               const bannerText = `收到 ${brandNew.length} 笔新点餐订单！${
                 first.table_no
                   ? `【${first.table_no}】`
@@ -2021,10 +2028,10 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="p-4 bg-neutral-50 border-t border-neutral-100 flex justify-end space-x-2">
+            <div className="p-4 bg-neutral-50 border-t border-neutral-100 flex items-center justify-end">
               <button
                 onClick={() => setSelectedOrderDetail(null)}
-                className="px-4 py-2 rounded-xl text-xs bg-neutral-200 text-neutral-700 hover:bg-neutral-300 transition-colors"
+                className="px-5 py-2 rounded-xl text-xs font-medium bg-neutral-200 text-neutral-700 hover:bg-neutral-300 transition-colors"
               >
                 关闭
               </button>

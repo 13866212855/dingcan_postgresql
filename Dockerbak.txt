@@ -2,7 +2,7 @@ FROM node:20-bookworm
 
 WORKDIR /app
 
-# 复制依赖声明文件1
+# 复制依赖声明文件2
 COPY package*.json ./
 
 # 安装依赖1

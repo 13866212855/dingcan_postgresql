@@ -41,6 +41,16 @@ export async function POST(req: NextRequest) {
       llm_auto_process_images,
       llm_max_image_dimension,
       llm_image_quality,
+      auto_print_enabled,
+      printer_type,
+      printer_name,
+      printer_sn,
+      printer_key,
+      printer_webhook_url,
+      printer_secret_token,
+      printer_copies,
+      printer_ticket_header,
+      printer_ticket_footer,
     } = body;
 
     if (enable_dine_in !== undefined) {
@@ -131,6 +141,42 @@ export async function POST(req: NextRequest) {
     if (llm_image_quality !== undefined) {
       const qual = Math.min(100, Math.max(10, parseInt(String(llm_image_quality)) || 82));
       await updateSetting('llm_image_quality', String(qual), tenantId);
+    }
+
+    // 自动打印模块配置更新
+    if (auto_print_enabled !== undefined) {
+      await updateSetting('auto_print_enabled', auto_print_enabled ? '1' : '0', tenantId);
+    }
+    if (printer_type !== undefined) {
+      const pType = String(printer_type).trim();
+      if (['webhook', 'feie', 'yilianyun'].includes(pType)) {
+        await updateSetting('printer_type', pType, tenantId);
+      }
+    }
+    if (printer_name !== undefined) {
+      await updateSetting('printer_name', String(printer_name).trim(), tenantId);
+    }
+    if (printer_sn !== undefined) {
+      await updateSetting('printer_sn', String(printer_sn).trim(), tenantId);
+    }
+    if (printer_key !== undefined) {
+      await updateSetting('printer_key', String(printer_key).trim(), tenantId);
+    }
+    if (printer_webhook_url !== undefined) {
+      await updateSetting('printer_webhook_url', String(printer_webhook_url).trim(), tenantId);
+    }
+    if (printer_secret_token !== undefined) {
+      await updateSetting('printer_secret_token', String(printer_secret_token).trim(), tenantId);
+    }
+    if (printer_copies !== undefined) {
+      const copies = Math.min(3, Math.max(1, parseInt(String(printer_copies)) || 1));
+      await updateSetting('printer_copies', String(copies), tenantId);
+    }
+    if (printer_ticket_header !== undefined) {
+      await updateSetting('printer_ticket_header', String(printer_ticket_header).trim(), tenantId);
+    }
+    if (printer_ticket_footer !== undefined) {
+      await updateSetting('printer_ticket_footer', String(printer_ticket_footer).trim(), tenantId);
     }
 
     const updated = await getSettings(tenantId);
