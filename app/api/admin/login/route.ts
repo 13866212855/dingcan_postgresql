@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
         value: 'authenticated_admin_token',
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 纯 HTTP 部署：非 localhost 的 http 源（如局域网 IP）浏览器会丢弃 Secure cookie
         sameSite: 'lax',
         maxAge: 60 * 60 * 24 * 7, // 7 days
       });
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
         value: scopeTenant,
         path: '/',
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 纯 HTTP 部署：非 localhost 的 http 源（如局域网 IP）浏览器会丢弃 Secure cookie
         sameSite: 'lax',
         maxAge: 60 * 60 * 24 * 7, // 7 days，与管理员会话同生命周期
       });
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
           value: tenant.trim().toLowerCase(),
           path: '/',
           httpOnly: false,
-          secure: process.env.NODE_ENV === 'production',
+          secure: false, // 纯 HTTP 部署：非 localhost 的 http 源（如局域网 IP）浏览器会丢弃 Secure cookie
           sameSite: 'lax',
           maxAge: 60 * 60 * 24 * 30, // 30 days
         });

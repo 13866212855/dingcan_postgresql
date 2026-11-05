@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
       value: encodeStaffSession(staff),
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: false, // 纯 HTTP 部署：非 localhost 的 http 源（如局域网 IP）浏览器会丢弃 Secure cookie
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 30,
     });
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       value: staff.tenant_id,
       path: '/',
       httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
+      secure: false, // 纯 HTTP 部署：非 localhost 的 http 源（如局域网 IP）浏览器会丢弃 Secure cookie
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 30,
     });

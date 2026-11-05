@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllOrders, createOrder, getOrderById, getSettings, verifyStaffSession } from '@/lib/db';
+import { getAllOrders, createOrder, getOrderById, getSettings, getAllTables, verifyStaffSession } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
 import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
@@ -70,8 +70,16 @@ export async function POST(req: NextRequest) {
     } = body;
 
     if (orderType === '堂食') {
+      // 与前端 CartDrawer 规则保持一致：仅当后台开启"堂食必须指定桌号"(require_table_no≠0)
+      // 且店内实际配置了餐桌时才强制校验桌号；
+      // 门店未配置任何餐桌（0桌店/纯外卖自提）或后台关闭必选桌时，桌号允许留空 → 落库兜底为"未定"
       if (!tableNo || tableNo.trim() === '') {
-        return NextResponse.json({ success: false, error: '请选择或填写就餐桌号' }, { status: 400 });
+        const settings = await getSettings(tenantId);
+        const requireTableNo = settings?.require_table_no !== 0;
+        const tables = await getAllTables(false, tenantId);
+        if (requireTableNo && tables.length > 0) {
+          return NextResponse.json({ success: false, error: '请选择或填写就餐桌号' }, { status: 400 });
+        }
       }
     } else {
       if (!deliveryAddress || deliveryAddress.trim() === '') {
