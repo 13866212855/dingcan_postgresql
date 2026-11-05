@@ -50,6 +50,7 @@ export interface Order {
   points_used: number;
   points_discount: number;
   points_earned: number;
+  instant_rebate?: number; // 积分即时立减金额（静态收款码模式：积分权益下单时以现金立减兑现，该单不再另送积分）
   final_amount: number;
   status: '待处理' | '制作中' | '已完成' | '已取消';
   handler_name?: string; // 处理该订单的接单员姓名（staff 处理留痕）

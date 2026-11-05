@@ -423,6 +423,16 @@ export default function OrderStatusModal({
                     </div>
                   )}
 
+                  {(order?.instant_rebate || 0) > 0 && (
+                    <div className="flex items-center justify-between text-emerald-700">
+                      <span className="flex items-center space-x-1">
+                        <Sparkles className="w-3 h-3" />
+                        <span>积分即时返 · 扫码立减</span>
+                      </span>
+                      <span className="font-bold">-¥{order?.instant_rebate?.toFixed(2)}</span>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between text-neutral-900 pt-1 border-t border-neutral-200">
                     <span className="font-bold">实付结账金额</span>
                     <span className="text-base font-black text-rose-600">

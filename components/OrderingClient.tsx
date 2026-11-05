@@ -92,8 +92,7 @@ export default function OrderingClient({
 
   // Payment Modal
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [pendingCheckoutData, setPendingCheckoutData] = useState<CheckoutOrderData | null>(null);
-  // 动态在线支付（虎皮椒）：订单已创建为未支付，等待通道回调自动确认
+  // 订单先建后付（静态/动态统一）：订单创建为未支付后弹支付窗，确认/回调只翻转支付状态
   const [dynamicPayData, setDynamicPayData] = useState<DynamicPayData | null>(null);
   const [createdPendingOrder, setCreatedPendingOrder] = useState<Order | null>(null);
   const [payCreating, setPayCreating] = useState(false);
@@ -360,7 +359,6 @@ export default function OrderingClient({
 
       if (!opts?.deferSuccessUi) {
         setIsPaymentModalOpen(false);
-        setPendingCheckoutData(null);
         setActiveOrderId(createdOrder.id);
         setIsNewlyCreatedOrder(true);
       }
@@ -378,7 +376,6 @@ export default function OrderingClient({
   const finishOrderSuccess = () => {
     const order = createdPendingOrder;
     setIsPaymentModalOpen(false);
-    setPendingCheckoutData(null);
     setDynamicPayData(null);
     if (order) {
       setActiveOrderId(order.id);
@@ -429,50 +426,42 @@ export default function OrderingClient({
       return;
     }
 
-    // 餐前付款 / 外卖：优先动态在线支付（回调自动确认，顾客无需自助声明）
-    const useDynamicPay = settings?.pay_mode === 'xunhupay' && settings?.pay_channel_ready === 1;
+    // 餐前付款 / 外卖：统一"先建单（未支付）→ 再弹支付"——
+    // 静态码模式下弹窗金额即服务端按积分比例立减后的实付金额（如 18 元 × 1% = 实付 17.82）
+    const created = await executeSubmitOrder(orderData, '未支付', { deferSuccessUi: true });
+    if (!created) return;
+    setCreatedPendingOrder(created);
 
+    // 动态在线支付（虎皮椒）：向通道拉起支付；未启用或失败时自动回退静态收款码弹窗
+    const useDynamicPay = settings?.pay_mode === 'xunhupay' && settings?.pay_channel_ready === 1;
     if (useDynamicPay) {
-      // 先建单（未支付）——同时修复"付了钱却没点按钮导致无订单"的反向漏洞
-      const created = await executeSubmitOrder(orderData, '未支付', { deferSuccessUi: true });
-      if (!created) return;
-      setCreatedPendingOrder(created);
       await openDynamicPay(created.id);
       return;
     }
-
-    // 静态收款码传统流程：先弹码，顾客扫码付款后自助确认 → 创建已支付订单
-    setPendingCheckoutData(orderData);
     setIsPaymentModalOpen(true);
   };
 
-  // Confirm payment in PaymentModal（静态模式）
+  // Confirm payment in PaymentModal（静态模式：翻转已建订单的支付状态）
   const handleConfirmPaidInModal = async () => {
-    if (createdPendingOrder) {
-      // 静态回退路径：订单已创建为未支付，顾客扫店内码后自助声明 → 服务端标记已支付
-      setIsSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/orders/${encodeURIComponent(createdPendingOrder.id)}?tenant=${encodeURIComponent(tenantId)}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paymentStatus: '已支付' }),
-          }
-        );
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || '支付状态更新失败');
-        finishOrderSuccess();
-      } catch (e: any) {
-        console.error(e);
-        alert(e?.message || '确认支付失败，请稍后重试');
-      } finally {
-        setIsSubmitting(false);
-      }
-      return;
-    }
-    if (pendingCheckoutData) {
-      await executeSubmitOrder(pendingCheckoutData, '已支付');
+    if (!createdPendingOrder) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/orders/${encodeURIComponent(createdPendingOrder.id)}?tenant=${encodeURIComponent(tenantId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paymentStatus: '已支付' }),
+        }
+      );
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || '支付状态更新失败');
+      finishOrderSuccess();
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || '确认支付失败，请稍后重试');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -797,25 +786,13 @@ export default function OrderingClient({
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         onConfirmPaid={handleConfirmPaidInModal}
-        amount={
-          createdPendingOrder
-            ? createdPendingOrder.final_amount
-            : pendingCheckoutData?.finalAmount ?? totalPrice
-        }
+        amount={createdPendingOrder ? createdPendingOrder.final_amount : totalPrice}
         originalAmount={totalPrice}
-        pointsDiscount={
-          createdPendingOrder
-            ? createdPendingOrder.points_discount
-            : pendingCheckoutData?.pointsDiscount ?? 0
-        }
+        pointsDiscount={createdPendingOrder ? createdPendingOrder.points_discount : 0}
         qrCodeUrl={settings?.payment_qr_code}
         tableOrOrderInfo={
           createdPendingOrder
             ? `订单号: ${createdPendingOrder.id} · ${createdPendingOrder.order_type === '外卖' ? '送餐到家' : createdPendingOrder.table_no}`
-            : pendingCheckoutData
-            ? pendingCheckoutData.orderType === '外卖'
-              ? `送餐外卖 · ${pendingCheckoutData.deliveryAddress}`
-              : `到店堂食 · ${pendingCheckoutData.tableNo}`
             : ''
         }
         isConfirming={isSubmitting}

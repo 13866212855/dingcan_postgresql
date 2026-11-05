@@ -452,6 +452,7 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_name TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_phone TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_id INTEGER;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS instant_rebate DOUBLE PRECISION NOT NULL DEFAULT 0;
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1716,12 +1717,27 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     }
   }
 
-  const finalAmount = Math.max(0, Math.round((total - pointsDiscount) * 100) / 100);
-
-  // Calculate earned points from tenant settings
   const settings = await getSettings(tenantId);
   const pointsRatio = (settings.points_ratio || 1) / 100;
-  const pointsEarned = Math.round(finalAmount * pointsRatio * 100) / 100;
+
+  // 积分即时立减（仅静态收款码模式·随机尾数版）：
+  // 立减上限 = (原价 - 会员积分抵现) × 积分比例（原固定公式），
+  // 实际立减 = 0.01 ~ 上限 之间的随机金额（精确到分）——顾客永远比标价付得少，
+  // 且每单实付尾数随机不重复，两单同价订单绝不"撞尾数"，店家按"金额+时间"对账唯一锁定。
+  // 例：18 元、比例 1%（上限 0.18）→ 实付在 17.82 ~ 17.99 间随机（如 17.99、17.95、17.87）。
+  // 该单 points_earned 固定为 0——立减即积分兑现，杜绝"立减+事后送积分"双重赠送（积分只送一次）。
+  // 动态在线支付（虎皮椒）模式保持传统积分：回调确认到账后按原逻辑赠送。
+  const dynamicPayActive = settings.pay_mode === 'xunhupay' && settings.pay_channel_ready === 1;
+  const rebateCeiling = dynamicPayActive
+    ? 0
+    : Math.round((total - pointsDiscount) * pointsRatio * 100) / 100;
+  const instantRebate =
+    rebateCeiling >= 0.01
+      ? Math.round((0.01 + Math.random() * (rebateCeiling - 0.01)) * 100) / 100
+      : 0;
+
+  const finalAmount = Math.max(0, Math.round((total - pointsDiscount - instantRebate) * 100) / 100);
+  const pointsEarned = instantRebate > 0 ? 0 : Math.round(finalAmount * pointsRatio * 100) / 100;
 
   if (userId && paymentStatus === '已支付') {
     const user = await getUser(userId, tenantId);
@@ -1755,9 +1771,9 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     `INSERT INTO orders (
       id, tenant_id, table_no, order_type, delivery_address, delivery_contact, delivery_phone,
       payment_timing, payment_status, total_amount, points_used, points_discount,
-      points_earned, final_amount, status, notes, user_id, created_at, updated_at
+      points_earned, final_amount, instant_rebate, status, notes, user_id, created_at, updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, '待处理', $15, $16, $17, $18
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19
     )`,
     [
       orderId,
@@ -1774,6 +1790,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
       pointsDiscount,
       pointsEarned,
       finalAmount,
+      instantRebate,
       notes || '',
       userId || null,
       nowIso,
@@ -1803,6 +1820,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     points_used: actualPointsUsed,
     points_discount: pointsDiscount,
     points_earned: pointsEarned,
+    instant_rebate: instantRebate,
     final_amount: finalAmount,
     status: '待处理',
     notes,

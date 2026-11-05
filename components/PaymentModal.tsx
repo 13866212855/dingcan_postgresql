@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { X, QrCode, CheckCircle2, AlertCircle, Sparkles, RefreshCw, Loader2, Smartphone, ExternalLink, Clock } from 'lucide-react';
+import { X, QrCode, CheckCircle2, AlertCircle, Sparkles, RefreshCw, Loader2, Smartphone, ExternalLink } from 'lucide-react';
 import Image from 'next/image';
 
 export interface DynamicPayData {
@@ -57,19 +57,59 @@ export default function PaymentModal({
 
   const isDynamic = !!dynamicPay;
 
-  // 静态收款码模式：确认按钮延迟 20 秒出现——
-  // 为顾客预留"识别二维码 → 输入金额 → 完成支付"的真实操作时间，降低误点与未付先点的概率
-  const CONFIRM_DELAY_SECONDS = 20;
+  // 静态收款码模式：确认按钮三重门禁——
+  // ① 基础延迟：每次打开随机 20~28 秒（预留真实支付时间；随机化让"干等过期"无法掐点）
+  // ② 移动端额外要求：长按过二维码（识别手势）且发生过"页面切出→切回"（进入微信付款面板再返回）
+  // ③ 45 秒防锁死逃生口：即使信号未齐也放行（避免真实付款顾客被卡死无法确认）
+  // UI 状态盲化：占位按钮不显示倒计时/进度动画，计时阶段与动作门禁阶段共用同一文案——
+  // 未付款者无法从界面分辨还差多久、卡在哪道门
+  const CONFIRM_DELAY_BASE = 20;
+  const CONFIRM_DELAY_JITTER = 9; // +0~8s → 每次打开 20~28s 随机
+  const CONFIRM_ESCAPE_SECONDS = 45;
   const [confirmDelayLeft, setConfirmDelayLeft] = React.useState(0);
+  const [elapsedSec, setElapsedSec] = React.useState(0);
+  const [longPressed, setLongPressed] = React.useState(false);
+  const [returnedAfterHidden, setReturnedAfterHidden] = React.useState(false);
+  const pressStartRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     if (!isOpen || isDynamic) return;
-    setConfirmDelayLeft(CONFIRM_DELAY_SECONDS);
+    setConfirmDelayLeft(CONFIRM_DELAY_BASE + Math.floor(Math.random() * CONFIRM_DELAY_JITTER));
+    setElapsedSec(0);
+    setLongPressed(false);
+    setReturnedAfterHidden(false);
     const t = setInterval(() => {
-      setConfirmDelayLeft((s) => (s <= 1 ? 0 : s - 1));
+      setConfirmDelayLeft((s) => (s > 0 ? s - 1 : 0));
+      setElapsedSec((s) => s + 1);
     }, 1000);
     return () => clearInterval(t);
   }, [isOpen, isDynamic]);
+
+  // 可见性往返探测：微信内长按识别成功→收款面板弹出→本页 hidden；付款完成返回→ visible
+  React.useEffect(() => {
+    if (!isOpen || isDynamic) return;
+    let hiddenOnce = false;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenOnce = true;
+      } else if (hiddenOnce) {
+        setReturnedAfterHidden(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [isOpen, isDynamic]);
+
+  // ⚠ Hooks 顺序红线：所有 React hook 必须位于下方 `if (!isOpen) return null` 之前，
+  // 否则弹窗关闭/打开两态 hook 数量不一致 → React #310 "Rendered more hooks" 白屏崩溃
+
+  // 积分即时立减金额（静态码模式：实付=标价×(1-积分比例)，由服务端算入 amount/final_amount）
+  const rebateAmount = React.useMemo(() => {
+    if (originalAmount === undefined) return 0;
+    const payable = isDynamic ? dynamicPay.amount : amount;
+    const r = Math.round((originalAmount - pointsDiscount - payable) * 100) / 100;
+    return r > 0.005 ? r : 0;
+  }, [originalAmount, pointsDiscount, amount, isDynamic, dynamicPay]);
   const isMobile = React.useMemo(() => {
     if (typeof navigator === 'undefined') return false;
     return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent);
@@ -126,6 +166,22 @@ export default function PaymentModal({
   const secondsLeft = isDynamic ? Math.max(0, Math.floor((dynamicPay.expiresAt - now) / 1000)) : 0;
   const qrExpired = isDynamic && secondsLeft <= 0;
 
+  // 确认按钮门禁判定（仅静态模式使用）
+  const actionGatesPassed =
+    !isMobile || (longPressed && returnedAfterHidden) || elapsedSec >= CONFIRM_ESCAPE_SECONDS;
+  const canConfirmStatic = confirmDelayLeft === 0 && actionGatesPassed;
+
+  // 长按识别手势探测（≥400ms 视为长按；不阻断系统菜单，只做记录）
+  const handlePressStart = () => {
+    pressStartRef.current = Date.now();
+  };
+  const handlePressEnd = () => {
+    if (pressStartRef.current !== null && Date.now() - pressStartRef.current >= 400) {
+      setLongPressed(true);
+    }
+    pressStartRef.current = null;
+  };
+
   const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
   return (
@@ -157,6 +213,12 @@ export default function PaymentModal({
               <div className="text-[11px] text-amber-800 flex items-center justify-center space-x-1 mt-1">
                 <Sparkles className="w-3.5 h-3.5 text-amber-600" />
                 <span>原价 ¥{originalAmount.toFixed(2)} · 已积分抵扣 ¥{pointsDiscount.toFixed(2)}</span>
+              </div>
+            )}
+            {rebateAmount > 0 && (
+              <div className="text-[11px] text-emerald-700 flex items-center justify-center space-x-1 mt-1">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>积分即时返 · 扫码立减 ¥{rebateAmount.toFixed(2)}</span>
               </div>
             )}
             {tableOrOrderInfo && (
@@ -266,8 +328,14 @@ export default function PaymentModal({
               </div>
             )
           ) : (
-            /* ============ 静态收款码模式（原有逻辑，保留为回退） ============ */
-            <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200 flex flex-col items-center justify-center">
+            /* ============ 静态收款码模式（长按识别 + 支付动作门禁） ============ */
+            <div
+              className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200 flex flex-col items-center justify-center select-none"
+              onPointerDown={handlePressStart}
+              onPointerUp={handlePressEnd}
+              onPointerCancel={() => { pressStartRef.current = null; }}
+              onContextMenu={() => setLongPressed(true)}
+            >
               {qrCodeUrl && !imgError ? (
                 <div className="relative w-56 h-56 rounded-xl overflow-hidden bg-white shadow-inner border border-neutral-200">
                   <Image
@@ -302,22 +370,49 @@ export default function PaymentModal({
                 </span>
               </div>
               <p className="text-[11px] text-neutral-500 mt-1.5">
-                请您识别上面二维码，如实支付显示金额
+                {isMobile
+                  ? '请您识别上面二维码，如实支付显示金额'
+                  : <span>请用手机「扫一扫」上方二维码，如实输入金额 <strong className="text-neutral-700 font-bold">¥{amount.toFixed(2)}</strong> 完成支付</span>}
               </p>
+
+              {/* 移动端支付动作步骤提示（兼作门禁进度反馈） */}
+              {isMobile && (
+                <div className="mt-2.5 w-full px-2 flex items-center justify-center gap-2 text-[11px]">
+                  <span
+                    className={`px-2 py-0.5 rounded-full border ${
+                      longPressed
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold'
+                        : 'bg-white border-neutral-200 text-neutral-400'
+                    }`}
+                  >
+                    {longPressed ? '✓ 已识别二维码' : '① 长按识别二维码'}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full border ${
+                      returnedAfterHidden
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold'
+                        : 'bg-white border-neutral-200 text-neutral-400'
+                    }`}
+                  >
+                    {returnedAfterHidden ? '✓ 已返回本页' : '② 支付后返回本页'}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
           {/* Actions */}
           {(!isDynamic || !dynamicPay) && (
             <div className="space-y-2 pt-1">
-              {confirmDelayLeft > 0 ? (
+              {!canConfirmStatic ? (
+                /* 状态盲化占位：不显示倒计时与脉冲动画；计时阶段/动作门禁阶段共用同一文案，
+                   谎报者无法从界面分辨还差多久、卡在哪道门（不暴露"等待过期"信号） */
                 <button
                   type="button"
                   disabled
-                  className="w-full py-2.5 bg-neutral-100 text-neutral-400 text-xs font-bold rounded-xl cursor-not-allowed flex items-center justify-center space-x-1.5"
+                  className="w-full py-2.5 bg-neutral-100 text-neutral-400 text-xs font-bold rounded-xl cursor-not-allowed flex items-center justify-center"
                 >
-                  <Clock className="w-4 h-4 animate-pulse" />
-                  <span>请先识别二维码完成支付（{confirmDelayLeft} 秒后可确认）</span>
+                  <span>请先完成二维码支付</span>
                 </button>
               ) : (
                 <button

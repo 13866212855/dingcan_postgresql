@@ -1030,7 +1030,8 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                 <span>静态收款码模式（默认）</span>
               </div>
               <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
-                展示店内统一收款码，顾客付款后自行点击确认。适合过渡期或通道故障时回退。
+                展示店内统一收款码，顾客付款后经"长按识别+返回页面+延迟"三重门禁自助确认。
+                积分权益即时兑现：立减金额在 0.01 元 ~ 积分比例金额之间随机，例如比例 1% 时 18 元实付在 17.82 ~ 17.99 元间随机——每单尾数不同，方便按金额对账（该单不再另送积分）。
               </p>
             </button>
             <button
