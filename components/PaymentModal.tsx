@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { X, QrCode, CheckCircle2, AlertCircle, Sparkles, RefreshCw, Loader2, Smartphone, ExternalLink } from 'lucide-react';
+import { X, QrCode, CheckCircle2, AlertCircle, Sparkles, RefreshCw, Loader2, Smartphone, ExternalLink, Clock } from 'lucide-react';
 import Image from 'next/image';
 
 export interface DynamicPayData {
@@ -56,6 +56,20 @@ export default function PaymentModal({
   const [paidDetected, setPaidDetected] = React.useState(false);
 
   const isDynamic = !!dynamicPay;
+
+  // 静态收款码模式：确认按钮延迟 20 秒出现——
+  // 为顾客预留"识别二维码 → 输入金额 → 完成支付"的真实操作时间，降低误点与未付先点的概率
+  const CONFIRM_DELAY_SECONDS = 20;
+  const [confirmDelayLeft, setConfirmDelayLeft] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!isOpen || isDynamic) return;
+    setConfirmDelayLeft(CONFIRM_DELAY_SECONDS);
+    const t = setInterval(() => {
+      setConfirmDelayLeft((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [isOpen, isDynamic]);
   const isMobile = React.useMemo(() => {
     if (typeof navigator === 'undefined') return false;
     return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent);
@@ -288,7 +302,7 @@ export default function PaymentModal({
                 </span>
               </div>
               <p className="text-[11px] text-neutral-500 mt-1.5">
-                请打开手机扫一扫完成支付
+                请您识别上面二维码，如实支付显示金额
               </p>
             </div>
           )}
@@ -296,14 +310,25 @@ export default function PaymentModal({
           {/* Actions */}
           {(!isDynamic || !dynamicPay) && (
             <div className="space-y-2 pt-1">
-              <button
-                onClick={onConfirmPaid}
-                disabled={isConfirming}
-                className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center justify-center space-x-1.5 transition-all active:scale-98 disabled:opacity-70"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{isConfirming ? '提交中...' : '我已完成扫码支付'}</span>
-              </button>
+              {confirmDelayLeft > 0 ? (
+                <button
+                  type="button"
+                  disabled
+                  className="w-full py-2.5 bg-neutral-100 text-neutral-400 text-xs font-bold rounded-xl cursor-not-allowed flex items-center justify-center space-x-1.5"
+                >
+                  <Clock className="w-4 h-4 animate-pulse" />
+                  <span>请先识别二维码完成支付（{confirmDelayLeft} 秒后可确认）</span>
+                </button>
+              ) : (
+                <button
+                  onClick={onConfirmPaid}
+                  disabled={isConfirming}
+                  className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center justify-center space-x-1.5 transition-all active:scale-98 disabled:opacity-70"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isConfirming ? '提交中...' : '我已完成扫码支付'}</span>
+                </button>
+              )}
 
               <button
                 onClick={onClose}
