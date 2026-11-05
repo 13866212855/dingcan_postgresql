@@ -22,8 +22,8 @@ import CartDrawer, { CheckoutOrderData } from '@/components/CartDrawer';
 import OrderStatusModal from '@/components/OrderStatusModal';
 import OrderHistoryModal from '@/components/OrderHistoryModal';
 import MemberModal from '@/components/MemberModal';
-import PaymentModal from '@/components/PaymentModal';
-import { Dish, CartItem, DiningTable, AppUser, AppSettings } from '@/types';
+import PaymentModal, { DynamicPayData } from '@/components/PaymentModal';
+import { Dish, CartItem, DiningTable, AppUser, AppSettings, Order } from '@/types';
 import { useStorageItem, getClientUserId, safeSetItem } from '@/lib/storage';
 import { safeFetchJson } from '@/lib/fetchUtils';
 
@@ -93,6 +93,10 @@ export default function OrderingClient({
   // Payment Modal
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [pendingCheckoutData, setPendingCheckoutData] = useState<CheckoutOrderData | null>(null);
+  // 动态在线支付（虎皮椒）：订单已创建为未支付，等待通道回调自动确认
+  const [dynamicPayData, setDynamicPayData] = useState<DynamicPayData | null>(null);
+  const [createdPendingOrder, setCreatedPendingOrder] = useState<Order | null>(null);
+  const [payCreating, setPayCreating] = useState(false);
 
   // Orders state
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
@@ -307,7 +311,11 @@ export default function OrderingClient({
   }, [cartList]);
 
   // Submit order execution
-  const executeSubmitOrder = async (orderData: CheckoutOrderData, paymentStatus: '未支付' | '已支付') => {
+  const executeSubmitOrder = async (
+    orderData: CheckoutOrderData,
+    paymentStatus: '未支付' | '已支付',
+    opts?: { deferSuccessUi?: boolean }
+  ): Promise<Order | null> => {
     setIsSubmitting(true);
     try {
       const userId = getClientUserId();
@@ -344,41 +352,128 @@ export default function OrderingClient({
       // Success
       clearCart();
       setIsCartOpen(false);
-      setIsPaymentModalOpen(false);
-      setPendingCheckoutData(null);
 
       // Save order id to local state
-      const createdOrder = data.data;
+      const createdOrder: Order = data.data;
       const newOrders = [createdOrder.id, ...placedOrderIds];
       setRawOrderIds(JSON.stringify(newOrders));
 
-      setActiveOrderId(createdOrder.id);
-      setIsNewlyCreatedOrder(true);
+      if (!opts?.deferSuccessUi) {
+        setIsPaymentModalOpen(false);
+        setPendingCheckoutData(null);
+        setActiveOrderId(createdOrder.id);
+        setIsNewlyCreatedOrder(true);
+      }
 
       // Refresh user profile (points updated) and free tables
       fetchUserAndSettings();
       fetchFreeTables();
+      return createdOrder;
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Called from CartDrawer checkout button
-  const handleStartCheckout = async (orderData: CheckoutOrderData) => {
-    if (orderData.paymentTiming === '餐前付款' || orderData.orderType === '外卖') {
-      // Must open PaymentModal first
-      setPendingCheckoutData(orderData);
+  // 动态支付成功/收尾：清空待支付态并打开订单状态弹窗
+  const finishOrderSuccess = () => {
+    const order = createdPendingOrder;
+    setIsPaymentModalOpen(false);
+    setPendingCheckoutData(null);
+    setDynamicPayData(null);
+    if (order) {
+      setActiveOrderId(order.id);
+      setIsNewlyCreatedOrder(true);
+    }
+    setCreatedPendingOrder(null);
+    fetchUserAndSettings();
+    fetchFreeTables();
+  };
+
+  // 拉起/刷新动态在线支付（服务端幂等，3.5 分钟内复用同一笔）；通道异常时自动回退静态收款码模式
+  const openDynamicPay = async (orderId: string) => {
+    setPayCreating(true);
+    setDynamicPayData(null);
+    try {
+      const res = await fetch(`/api/pay/create?tenant=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      });
+      const data = await res.json();
+      if (data.success && data.data?.payUrl) {
+        setDynamicPayData({ orderId, ...data.data });
+        setIsPaymentModalOpen(true);
+        return;
+      }
+      if (data.data?.alreadyPaid || data.data?.freeOrder) {
+        // 罕见：订单已支付（他端并发付款）或 0 元订单——直接按成功收尾
+        finishOrderSuccess();
+        return;
+      }
+      // 通道下单失败 → 静态码回退（dynamicPayData 保持 null，弹窗自动渲染静态模式）
+      console.warn('[Pay] 动态支付创建失败，回退静态收款码:', data.error);
       setIsPaymentModalOpen(true);
-    } else {
-      // 餐后付款: directly create order as '未支付'
-      await executeSubmitOrder(orderData, '未支付');
+    } catch (e) {
+      console.warn('[Pay] 动态支付创建异常，回退静态收款码:', e);
+      setIsPaymentModalOpen(true);
+    } finally {
+      setPayCreating(false);
     }
   };
 
-  // Confirm payment in PaymentModal
+  // Called from CartDrawer checkout button
+  const handleStartCheckout = async (orderData: CheckoutOrderData) => {
+    // 纯餐后结账堂食单：直接创建未支付订单，不弹支付
+    if (orderData.paymentTiming === '餐后结账' && orderData.orderType !== '外卖') {
+      await executeSubmitOrder(orderData, '未支付');
+      return;
+    }
+
+    // 餐前付款 / 外卖：优先动态在线支付（回调自动确认，顾客无需自助声明）
+    const useDynamicPay = settings?.pay_mode === 'xunhupay' && settings?.pay_channel_ready === 1;
+
+    if (useDynamicPay) {
+      // 先建单（未支付）——同时修复"付了钱却没点按钮导致无订单"的反向漏洞
+      const created = await executeSubmitOrder(orderData, '未支付', { deferSuccessUi: true });
+      if (!created) return;
+      setCreatedPendingOrder(created);
+      await openDynamicPay(created.id);
+      return;
+    }
+
+    // 静态收款码传统流程：先弹码，顾客扫码付款后自助确认 → 创建已支付订单
+    setPendingCheckoutData(orderData);
+    setIsPaymentModalOpen(true);
+  };
+
+  // Confirm payment in PaymentModal（静态模式）
   const handleConfirmPaidInModal = async () => {
-    if (!pendingCheckoutData) return;
-    await executeSubmitOrder(pendingCheckoutData, '已支付');
+    if (createdPendingOrder) {
+      // 静态回退路径：订单已创建为未支付，顾客扫店内码后自助声明 → 服务端标记已支付
+      setIsSubmitting(true);
+      try {
+        const res = await fetch(
+          `/api/orders/${encodeURIComponent(createdPendingOrder.id)}?tenant=${encodeURIComponent(tenantId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentStatus: '已支付' }),
+          }
+        );
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || '支付状态更新失败');
+        finishOrderSuccess();
+      } catch (e: any) {
+        console.error(e);
+        alert(e?.message || '确认支付失败，请稍后重试');
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+    if (pendingCheckoutData) {
+      await executeSubmitOrder(pendingCheckoutData, '已支付');
+    }
   };
 
   // Categories extraction
@@ -702,18 +797,35 @@ export default function OrderingClient({
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         onConfirmPaid={handleConfirmPaidInModal}
-        amount={pendingCheckoutData?.finalAmount ?? totalPrice}
+        amount={
+          createdPendingOrder
+            ? createdPendingOrder.final_amount
+            : pendingCheckoutData?.finalAmount ?? totalPrice
+        }
         originalAmount={totalPrice}
-        pointsDiscount={pendingCheckoutData?.pointsDiscount ?? 0}
+        pointsDiscount={
+          createdPendingOrder
+            ? createdPendingOrder.points_discount
+            : pendingCheckoutData?.pointsDiscount ?? 0
+        }
         qrCodeUrl={settings?.payment_qr_code}
         tableOrOrderInfo={
-          pendingCheckoutData
+          createdPendingOrder
+            ? `订单号: ${createdPendingOrder.id} · ${createdPendingOrder.order_type === '外卖' ? '送餐到家' : createdPendingOrder.table_no}`
+            : pendingCheckoutData
             ? pendingCheckoutData.orderType === '外卖'
               ? `送餐外卖 · ${pendingCheckoutData.deliveryAddress}`
               : `到店堂食 · ${pendingCheckoutData.tableNo}`
             : ''
         }
         isConfirming={isSubmitting}
+        dynamicPay={dynamicPayData}
+        tenantId={tenantId}
+        onPaid={finishOrderSuccess}
+        onRefreshPay={() => {
+          if (createdPendingOrder) openDynamicPay(createdPendingOrder.id);
+        }}
+        isCreatingPay={payCreating}
       />
 
       <MemberModal
@@ -733,6 +845,9 @@ export default function OrderingClient({
         }}
         isNewlyCreated={isNewlyCreatedOrder}
         qrCodeUrl={settings?.payment_qr_code}
+        payMode={settings?.pay_mode}
+        payChannelReady={settings?.pay_channel_ready === 1}
+        tenantId={tenantId}
         onPaymentSuccess={() => {
           fetchUserAndSettings();
         }}

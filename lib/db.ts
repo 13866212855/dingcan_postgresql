@@ -424,6 +424,24 @@ export async function ensureDatabase(): Promise<Pool> {
           created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS pay_records (
+          id SERIAL PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          order_id TEXT NOT NULL,
+          trade_order_id TEXT NOT NULL UNIQUE,
+          gateway TEXT NOT NULL DEFAULT 'xunhupay',
+          amount DOUBLE PRECISION NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          transaction_id TEXT DEFAULT '',
+          url TEXT DEFAULT '',
+          url_qrcode TEXT DEFAULT '',
+          callback_raw TEXT DEFAULT '',
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          paid_at TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pay_records_tenant_order ON pay_records (tenant_id, order_id);
       `);
 
       // 2. Safe schema upgrade migrations: add tenant_id column if missing in older tables
@@ -1306,6 +1324,13 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let enable_pay_before = 1; // 默认开启餐前付款(立付)
   let enable_pay_after = 1; // 默认开启餐后结账(先吃后付)
 
+  // 在线支付通道（虎皮椒）配置默认值——注意：xhu_secret 密钥只存服务端，绝不出现在 getSettings 返回值中
+  let pay_mode: 'static' | 'xunhupay' = 'static'; // 默认静态收款码模式（不改变旧行为）
+  let xhu_appid = '';
+  let xhu_gateway = 'https://api.xunhupay.com/payment/do.html';
+  let pay_notify_base = '';
+  let xhu_secret_configured = 0; // 密钥是否已配置（0/1 标志位，不回传密钥本身）
+
   // 大模型 (AI大脑) 默认配置
   let llm_base_url = 'https://apihub.agnes-ai.com/v1';
   let llm_api_key = 'sk-vWM7RHG5n7bljBNi3GgHfygxqiKlUYrPWZLLSUByIGm4BiM9';
@@ -1351,6 +1376,13 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     }
     if (row.key === 'enable_pay_before') enable_pay_before = row.value === '0' ? 0 : 1;
     if (row.key === 'enable_pay_after') enable_pay_after = row.value === '0' ? 0 : 1;
+
+    // 在线支付通道（虎皮椒）配置键值——xhu_secret 在此仅探测是否已配置，不读取明文进返回值
+    if (row.key === 'pay_mode' && row.value === 'xunhupay') pay_mode = 'xunhupay';
+    if (row.key === 'xhu_appid') xhu_appid = row.value || '';
+    if (row.key === 'xhu_gateway' && row.value?.trim()) xhu_gateway = row.value.trim();
+    if (row.key === 'pay_notify_base') pay_notify_base = row.value || '';
+    if (row.key === 'xhu_secret' && row.value?.trim()) xhu_secret_configured = 1;
 
     // LLM配置键值
     if (row.key === 'llm_base_url' && row.value?.trim()) llm_base_url = row.value.trim();
@@ -1399,6 +1431,13 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     table_input_mode,
     enable_pay_before,
     enable_pay_after,
+    pay_mode,
+    xhu_appid,
+    xhu_gateway,
+    pay_notify_base,
+    xhu_secret_configured,
+    // 通道就绪标志：动态模式 + 三要素齐全（appid/secret/回调基址），前端据此决定走动态支付还是静态码
+    pay_channel_ready: pay_mode === 'xunhupay' && !!xhu_appid.trim() && xhu_secret_configured === 1 && !!pay_notify_base.trim() ? 1 : 0,
     llm_base_url,
     llm_api_key,
     llm_text_model,
@@ -1989,4 +2028,155 @@ export async function updateOrderPayment(
   }
 
   return true;
+}
+
+// ----------------------------------------------------
+// Online Pay Channel (XunhuPay) Operations — 租户隔离
+// ----------------------------------------------------
+
+export interface PayChannelConfig {
+  mode: 'static' | 'xunhupay';
+  appid: string;
+  secret: string;
+  gateway: string;
+  notifyBase: string;
+  ready: boolean; // 动态支付三要素齐全且模式开启
+}
+
+/** 服务端专用：读取含密钥在内的完整支付通道配置（密钥严禁经任何 API 返回前端） */
+export async function getPayChannelConfig(tenantId = 'default'): Promise<PayChannelConfig> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    'SELECT key, value FROM settings WHERE tenant_id = $1 AND key IN ($2,$3,$4,$5)',
+    [tenantId, 'pay_mode', 'xhu_appid', 'xhu_secret', 'xhu_gateway']
+  );
+  let mode: 'static' | 'xunhupay' = 'static';
+  let appid = '';
+  let secret = '';
+  let gateway = 'https://api.xunhupay.com/payment/do.html';
+  for (const row of res.rows) {
+    if (row.key === 'pay_mode' && row.value === 'xunhupay') mode = 'xunhupay';
+    if (row.key === 'xhu_appid') appid = (row.value || '').trim();
+    if (row.key === 'xhu_secret') secret = (row.value || '').trim();
+    if (row.key === 'xhu_gateway' && row.value?.trim()) gateway = row.value.trim();
+  }
+  // 回调基址单独查（可能与上面的 IN 列表合并查询，但保持独立更清晰）
+  const nb = await pool.query(
+    'SELECT value FROM settings WHERE tenant_id = $1 AND key = $2',
+    [tenantId, 'pay_notify_base']
+  );
+  const notifyBase = (nb.rows[0]?.value || '').trim().replace(/\/+$/, '');
+
+  return {
+    mode,
+    appid,
+    secret,
+    gateway,
+    notifyBase,
+    ready: mode === 'xunhupay' && !!appid && !!secret && !!notifyBase,
+  };
+}
+
+export interface PayRecord {
+  id: number;
+  tenant_id: string;
+  order_id: string;
+  trade_order_id: string;
+  gateway: string;
+  amount: number;
+  status: 'pending' | 'paid' | 'expired';
+  transaction_id: string;
+  url: string;
+  url_qrcode: string;
+  callback_raw: string;
+  created_at: string;
+  paid_at: string | null;
+}
+
+function formatPayRecord(row: any): PayRecord {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    order_id: row.order_id,
+    trade_order_id: row.trade_order_id,
+    gateway: row.gateway,
+    amount: Number(row.amount),
+    status: row.status,
+    transaction_id: row.transaction_id || '',
+    url: row.url || '',
+    url_qrcode: row.url_qrcode || '',
+    callback_raw: row.callback_raw || '',
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    paid_at: row.paid_at ? (row.paid_at instanceof Date ? row.paid_at.toISOString() : String(row.paid_at)) : null,
+  };
+}
+
+/** 新建支付记录（每次向虎皮椒发起付款都落一行，trade_order_id 全局唯一） */
+export async function createPayRecord(params: {
+  tenantId: string;
+  orderId: string;
+  tradeOrderId: string;
+  amount: number;
+  url: string;
+  urlQrcode: string;
+}): Promise<PayRecord> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `INSERT INTO pay_records (tenant_id, order_id, trade_order_id, gateway, amount, url, url_qrcode)
+     VALUES ($1, $2, $3, 'xunhupay', $4, $5, $6) RETURNING *`,
+    [params.tenantId, params.orderId, params.tradeOrderId, params.amount, params.url, params.urlQrcode]
+  );
+  return formatPayRecord(res.rows[0]);
+}
+
+/** 幂等复用：取该订单 X 分钟内创建且仍 pending 的支付记录（防双击重复向通道下单） */
+export async function getReusablePendingPayRecord(
+  tenantId: string,
+  orderId: string,
+  withinMs = 210000
+): Promise<PayRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT * FROM pay_records
+     WHERE tenant_id = $1 AND order_id = $2 AND status = 'pending'
+       AND created_at >= $3
+     ORDER BY id DESC LIMIT 1`,
+    [tenantId, orderId, new Date(Date.now() - withinMs)]
+  );
+  return res.rows[0] ? formatPayRecord(res.rows[0]) : null;
+}
+
+/** 按虎皮椒商户单号查支付记录（回调定位订单用） */
+export async function findPayRecordByTradeOrderId(tradeOrderId: string): Promise<PayRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query('SELECT * FROM pay_records WHERE trade_order_id = $1 LIMIT 1', [tradeOrderId]);
+  return res.rows[0] ? formatPayRecord(res.rows[0]) : null;
+}
+
+/**
+ * 标记支付记录已支付（幂等）：
+ * 仅 pending → paid 才真正更新并返回 true（首次到账）；
+ * 已是 paid 直接返回 false（重复回调，确认 ack 但不重复入账）。
+ * 回调原文完整落库——对账与纠纷时的唯一证据。
+ */
+export async function markPayRecordPaid(
+  tradeOrderId: string,
+  transactionId: string,
+  callbackRaw: string
+): Promise<{ record: PayRecord | null; firstTime: boolean }> {
+  const pool = await ensureDatabase();
+  const nowIso = new Date().toISOString();
+  const res = await pool.query(
+    `UPDATE pay_records
+     SET status = 'paid', transaction_id = $1, callback_raw = $2, paid_at = $3
+     WHERE trade_order_id = $4 AND status = 'pending'
+     RETURNING *`,
+    [transactionId, callbackRaw, nowIso, tradeOrderId]
+  );
+  if (res.rows[0]) {
+    return { record: formatPayRecord(res.rows[0]), firstTime: true };
+  }
+  // 未更新说明已是 paid（或不存在）——回查返回现状
+  const existing = await findPayRecordByTradeOrderId(tradeOrderId);
+  return { record: existing, firstTime: false };
 }

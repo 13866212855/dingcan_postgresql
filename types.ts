@@ -117,6 +117,13 @@ export interface AppSettings {
   table_input_mode?: 'select' | 'input' | 'both'; // 桌号选择方式: 'select'下拉选桌, 'input'手输桌号, 'both'两者皆可 (默认'select')
   enable_pay_before?: number; // 支付付款时机: 1=开启餐前付款(立付), 0=关闭 (默认1)
   enable_pay_after?: number; // 支付付款时机: 1=开启餐后结账(先吃后付), 0=关闭 (默认1)
+  // 在线支付通道（虎皮椒）公开配置——密钥 xhu_secret 永不下发前端，仅下发是否已配置的标志
+  pay_mode?: 'static' | 'xunhupay'; // 支付模式: 'static'=静态收款码(顾客自助确认), 'xunhupay'=动态在线支付(回调自动确认) (默认'static')
+  xhu_appid?: string; // 虎皮椒 APPID（非密钥，供后台表单回显）
+  xhu_gateway?: string; // 虎皮椒支付网关（正式/备用平台可切换）
+  pay_notify_base?: string; // 公网回调基址（如 Render 域名或 cpolar 隧道域名，不带尾部斜杠）
+  xhu_secret_configured?: number; // 密钥是否已配置: 1=已配置, 0=未配置
+  pay_channel_ready?: number; // 动态支付通道就绪标志: 1=模式开启且三要素齐全, 0=未就绪（前端回退静态码）
   // 大模型 (AI大脑) 配置
   llm_base_url?: string; // 大模型服务端点，例如：https://apihub.agnes-ai.com/v1
   llm_api_key?: string; // 大模型授权访问密钥 (API Key)

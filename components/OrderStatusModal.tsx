@@ -16,7 +16,7 @@ import {
   User,
 } from 'lucide-react';
 import { Order } from '@/types';
-import PaymentModal from './PaymentModal';
+import PaymentModal, { DynamicPayData } from './PaymentModal';
 
 interface OrderStatusModalProps {
   orderId: string | null;
@@ -24,6 +24,10 @@ interface OrderStatusModalProps {
   isNewlyCreated?: boolean;
   qrCodeUrl?: string;
   onPaymentSuccess?: () => void;
+  /** 支付模式（来自租户设置）：'xunhupay' 且 payChannelReady 时立即结账走动态在线支付 */
+  payMode?: 'static' | 'xunhupay';
+  payChannelReady?: boolean;
+  tenantId?: string;
 }
 
 export default function OrderStatusModal({
@@ -32,12 +36,18 @@ export default function OrderStatusModal({
   isNewlyCreated = false,
   qrCodeUrl = '',
   onPaymentSuccess,
+  payMode = 'static',
+  payChannelReady = false,
+  tenantId = 'default',
 }: OrderStatusModalProps) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(() => new Date());
   const [showPayModal, setShowPayModal] = useState(false);
   const [confirmingPay, setConfirmingPay] = useState(false);
+  // 动态在线支付（虎皮椒）
+  const [dynamicPay, setDynamicPay] = useState<DynamicPayData | null>(null);
+  const [payCreating, setPayCreating] = useState(false);
 
   const fetchOrder = React.useCallback(
     async (showSpinner = false) => {
@@ -106,6 +116,43 @@ export default function OrderStatusModal({
   }, [orderId, fetchOrder]);
 
   if (!orderId) return null;
+
+  // 立即结账：动态通道就绪 → 服务端拉起虎皮椒支付；否则回退静态收款码自助确认
+  const handleOpenPay = async () => {
+    setShowPayModal(true);
+    if (!(payMode === 'xunhupay' && payChannelReady && order)) return;
+
+    setPayCreating(true);
+    setDynamicPay(null);
+    try {
+      const res = await fetch(`/api/pay/create?tenant=${encodeURIComponent(tenantId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.id }),
+      });
+      const data = await res.json();
+      if (data.success && data.data?.payUrl) {
+        setDynamicPay({ orderId: order.id, ...data.data });
+      } else if (data.data?.alreadyPaid) {
+        setShowPayModal(false);
+        await fetchOrder(true);
+        if (onPaymentSuccess) onPaymentSuccess();
+      }
+      // 其余失败情形：dynamicPay 保持 null → 弹窗自动渲染静态收款码模式
+    } catch (e) {
+      console.warn('[Pay] 拉起在线支付失败，回退静态码:', e);
+    } finally {
+      setPayCreating(false);
+    }
+  };
+
+  // 动态支付到账回调：刷新订单并通知父组件
+  const handlePaidByChannel = async () => {
+    setShowPayModal(false);
+    setDynamicPay(null);
+    await fetchOrder(true);
+    if (onPaymentSuccess) onPaymentSuccess();
+  };
 
   const handleConfirmPay = async () => {
     if (!order) return;
@@ -312,7 +359,7 @@ export default function OrderStatusModal({
                   </span>
                   {order?.payment_status === '未支付' && (
                     <button
-                      onClick={() => setShowPayModal(true)}
+                      onClick={handleOpenPay}
                       className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-[10px] font-bold shadow-xs transition-colors flex items-center space-x-1"
                     >
                       <CreditCard className="w-3 h-3" />
@@ -412,7 +459,10 @@ export default function OrderStatusModal({
       {showPayModal && order && (
         <PaymentModal
           isOpen={showPayModal}
-          onClose={() => setShowPayModal(false)}
+          onClose={() => {
+            setShowPayModal(false);
+            setDynamicPay(null);
+          }}
           amount={order.final_amount !== undefined ? order.final_amount : order.total_amount}
           originalAmount={order.total_amount}
           pointsDiscount={order.points_discount}
@@ -420,6 +470,15 @@ export default function OrderStatusModal({
           tableOrOrderInfo={`订单号: ${order.id} · ${order.order_type === '外卖' ? '送餐到家' : order.table_no}`}
           isConfirming={confirmingPay}
           onConfirmPaid={handleConfirmPay}
+          dynamicPay={dynamicPay}
+          tenantId={tenantId}
+          onPaid={handlePaidByChannel}
+          onRefreshPay={() => {
+            if (payMode === 'xunhupay' && payChannelReady) {
+              handleOpenPay();
+            }
+          }}
+          isCreatingPay={payCreating}
         />
       )}
     </>

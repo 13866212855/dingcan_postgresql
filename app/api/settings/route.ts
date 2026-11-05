@@ -34,6 +34,11 @@ export async function POST(req: NextRequest) {
       table_input_mode,
       enable_pay_before,
       enable_pay_after,
+      pay_mode,
+      xhu_appid,
+      xhu_secret,
+      xhu_gateway,
+      pay_notify_base,
       llm_base_url,
       llm_api_key,
       llm_text_model,
@@ -85,6 +90,27 @@ export async function POST(req: NextRequest) {
 
     if (enable_pay_after !== undefined) {
       await updateSetting('enable_pay_after', enable_pay_after ? '1' : '0', tenantId);
+    }
+
+    // 在线支付通道（虎皮椒）配置更新
+    if (pay_mode !== undefined) {
+      await updateSetting('pay_mode', pay_mode === 'xunhupay' ? 'xunhupay' : 'static', tenantId);
+    }
+    if (xhu_appid !== undefined) {
+      await updateSetting('xhu_appid', String(xhu_appid).trim(), tenantId);
+    }
+    if (xhu_secret !== undefined && String(xhu_secret).trim() !== '') {
+      // 密钥仅在管理员明确输入新值时覆盖（留空 = 保留原密钥不改动）
+      await updateSetting('xhu_secret', String(xhu_secret).trim(), tenantId);
+    }
+    if (xhu_gateway !== undefined) {
+      const gw = String(xhu_gateway).trim();
+      if (gw) {
+        await updateSetting('xhu_gateway', gw, tenantId);
+      }
+    }
+    if (pay_notify_base !== undefined) {
+      await updateSetting('pay_notify_base', String(pay_notify_base).trim().replace(/\/+$/, ''), tenantId);
     }
 
     if (payment_qr_code !== undefined) {

@@ -121,9 +121,12 @@ export async function POST(req: NextRequest) {
         const fullOrder = await getOrderById(order.id, tenantId);
         const settings = await getSettings(tenantId);
         if (fullOrder) {
-          const triggerNote = paymentStatus === '已支付'
-            ? '客户下单时已完成扫码支付 · 后台语音同步播报'
-            : '客户提交新订单（餐后结账）· 后台语音同步播报';
+          const triggerNote =
+            paymentStatus === '已支付'
+              ? '客户下单时已完成扫码支付 · 后台语音同步播报'
+              : paymentTiming === '餐前付款'
+              ? '客户已下单，正在完成在线支付（支付成功后自动确认到账）· 后台语音同步播报'
+              : '客户提交新订单（餐后结账）· 后台语音同步播报';
           await sendOrderPaymentEmail(fullOrder, {
             restaurantName: settings?.restaurant_name,
             noteTrigger: triggerNote,

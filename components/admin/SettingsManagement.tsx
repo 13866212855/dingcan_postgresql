@@ -56,6 +56,14 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [enablePayBefore, setEnablePayBefore] = useState(true);
   const [enablePayAfter, setEnablePayAfter] = useState(true);
 
+  // 在线支付通道（虎皮椒）配置
+  const [payMode, setPayMode] = useState<'static' | 'xunhupay'>('static');
+  const [xhuAppid, setXhuAppid] = useState('');
+  const [xhuSecretInput, setXhuSecretInput] = useState(''); // 留空 = 保留已保存密钥不改动
+  const [xhuGateway, setXhuGateway] = useState('https://api.xunhupay.com/payment/do.html');
+  const [payNotifyBase, setPayNotifyBase] = useState('');
+  const [xhuSecretConfigured, setXhuSecretConfigured] = useState(false);
+
   // 云打印机对接配置
   const [autoPrintEnabled, setAutoPrintEnabled] = useState(false);
   const [printerType, setPrinterType] = useState<'webhook' | 'feie' | 'yilianyun'>('webhook');
@@ -114,6 +122,13 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           }
           setEnablePayBefore(data.data.enable_pay_before !== 0);
           setEnablePayAfter(data.data.enable_pay_after !== 0);
+          // 在线支付通道配置加载（密钥不回显，仅显示是否已配置）
+          setPayMode(data.data.pay_mode === 'xunhupay' ? 'xunhupay' : 'static');
+          setXhuAppid(data.data.xhu_appid || '');
+          setXhuGateway(data.data.xhu_gateway || 'https://api.xunhupay.com/payment/do.html');
+          setPayNotifyBase(data.data.pay_notify_base || '');
+          setXhuSecretConfigured(data.data.xhu_secret_configured === 1);
+          setXhuSecretInput('');
           // 打印配置加载
           setAutoPrintEnabled(data.data.auto_print_enabled === 1);
           if (data.data.printer_type) setPrinterType(data.data.printer_type);
@@ -376,6 +391,11 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           table_input_mode: tableInputMode,
           enable_pay_before: enablePayBefore ? 1 : 0,
           enable_pay_after: enablePayAfter ? 1 : 0,
+          pay_mode: payMode,
+          xhu_appid: xhuAppid.trim(),
+          ...(xhuSecretInput.trim() !== '' ? { xhu_secret: xhuSecretInput.trim() } : {}),
+          xhu_gateway: xhuGateway.trim(),
+          pay_notify_base: payNotifyBase.trim(),
           auto_print_enabled: autoPrintEnabled ? 1 : 0,
           printer_type: printerType,
           printer_name: printerName.trim(),
@@ -974,6 +994,163 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Online Pay Channel (XunhuPay) */}
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <CreditCard className="w-5 h-5 text-amber-600" />
+              <div>
+                <h3 className="text-sm font-bold text-neutral-900">在线支付通道（虎皮椒 · 动态收款自动确认）</h3>
+                <p className="text-[11px] text-neutral-400">
+                  每单自动生成带金额的动态二维码/跳转链接，支付成功回调自动确认到账，顾客无需手动声明"已支付"
+                </p>
+              </div>
+            </div>
+            <span className="text-xs bg-amber-50 text-amber-700 font-bold px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center space-x-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${payMode === 'xunhupay' ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-300'}`}></span>
+              <span>{payMode === 'xunhupay' ? '动态支付' : '静态收款码'}</span>
+            </span>
+          </div>
+
+          {/* 模式切换 */}
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setPayMode('static')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                payMode === 'static'
+                  ? 'border-amber-500 bg-amber-50/60 ring-1 ring-amber-500/30'
+                  : 'border-neutral-200 bg-white hover:bg-neutral-50'
+              }`}
+            >
+              <div className="text-xs font-bold text-neutral-900 flex items-center space-x-1.5">
+                <QrCode className="w-4 h-4 text-amber-600" />
+                <span>静态收款码模式（默认）</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
+                展示店内统一收款码，顾客付款后自行点击确认。适合过渡期或通道故障时回退。
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPayMode('xunhupay')}
+              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                payMode === 'xunhupay'
+                  ? 'border-emerald-500 bg-emerald-50/60 ring-1 ring-emerald-500/30'
+                  : 'border-neutral-200 bg-white hover:bg-neutral-50'
+              }`}
+            >
+              <div className="text-xs font-bold text-neutral-900 flex items-center space-x-1.5">
+                <Zap className="w-4 h-4 text-emerald-600" />
+                <span>动态在线支付（虎皮椒）</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
+                金额自动带上、回调自动确认到账，彻底杜绝谎报"已支付"。需下方三要素配置完整后生效。
+              </p>
+            </button>
+          </div>
+
+          {payMode === 'xunhupay' && (
+            <div className="p-4 bg-neutral-50/70 border border-neutral-200 rounded-xl space-y-4">
+              <div className="text-xs font-bold text-neutral-800 flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-amber-600" />
+                <span>虎皮椒商户凭据（本店独立配置，各分店互不影响）</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700">
+                    APPID <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={xhuAppid}
+                    onChange={(e) => setXhuAppid(e.target.value)}
+                    placeholder="虎皮椒商户后台「支付渠道管理」中获取"
+                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-neutral-400">注册 admin.xunhupay.com → 支付渠道管理 → 复制 APPID（注意不要带空格）</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700">
+                    APPSECRET 密钥{' '}
+                    {xhuSecretConfigured ? (
+                      <span className="text-emerald-600 font-normal">（已配置 ✓ 输入新值可覆盖）</span>
+                    ) : (
+                      <span className="text-rose-500">*</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={xhuSecretInput}
+                    onChange={(e) => setXhuSecretInput(e.target.value)}
+                    placeholder={xhuSecretConfigured ? '留空 = 保留已保存的密钥' : '虎皮椒商户后台获取，复制时不要带空格'}
+                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-neutral-400">密钥仅保存在服务端数据库，不会下发到顾客浏览器</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700">支付网关</label>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setXhuGateway('https://api.xunhupay.com/payment/do.html')}
+                      className={`px-3 py-2 text-[11px] rounded-xl border text-left transition-all cursor-pointer ${
+                        xhuGateway === 'https://api.xunhupay.com/payment/do.html'
+                          ? 'border-amber-500 bg-amber-50/60 font-bold ring-1 ring-amber-500/30'
+                          : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-600'
+                      }`}
+                    >
+                      正式平台：api.xunhupay.com（默认）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setXhuGateway('https://api.dpweixin.com/payment/do.html')}
+                      className={`px-3 py-2 text-[11px] rounded-xl border text-left transition-all cursor-pointer ${
+                        xhuGateway === 'https://api.dpweixin.com/payment/do.html'
+                          ? 'border-amber-500 bg-amber-50/60 font-bold ring-1 ring-amber-500/30'
+                          : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-600'
+                      }`}
+                    >
+                      备用平台：api.dpweixin.com（正式平台维护时切换）
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700">
+                    支付回调公网基址 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={payNotifyBase}
+                    onChange={(e) => setPayNotifyBase(e.target.value)}
+                    placeholder="例如：https://your-app.onrender.com（不带 /api/pay/notify）"
+                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-neutral-400 leading-relaxed">
+                    虎皮椒支付成功后回调 <code className="bg-neutral-100 px-1 rounded">该地址 + /api/pay/notify</code>。必须是公网可访问域名：
+                    Render 部署填公网域名；本机 Docker 版需配合 cpolar 内网穿透域名（隧道域名变更后记得同步更新）。
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-[11px] text-amber-900 leading-relaxed space-y-1.5">
+                <p className="font-bold flex items-center space-x-1">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>启用须知</span>
+                </p>
+                <p>① 三要素（APPID + 密钥 + 回调基址）配置完整并保存后，顾客端才会切换到动态支付，否则自动按静态收款码收款，不影响营业。</p>
+                <p>② 费率以虎皮椒签约页为准（个人通道约 1%~2.5%）；资金最终进入您绑定的个人微信/支付宝账户。</p>
+                <p>③ 虎皮椒平台维护期间若下单失败，系统自动回退静态收款码模式，顾客仍可正常付款（由店员核对到账）。</p>
+                <p>④ 建议首次启用后，用 0.01 元真实支付走一遍全流程验证回调到账。</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Email Notification Service (QQ Mail SMTP) */}
