@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
       pointsUsed = 0,
       notes,
       userId,
+      instantRebate,
       items,
     } = body;
 
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
         pointsUsed: Number(pointsUsed) || 0,
         notes: notes?.trim() || '',
         userId: userId?.trim() || undefined,
+        instantRebate: typeof instantRebate === 'number' && isFinite(instantRebate) ? instantRebate : undefined,
         items: items.map((i: any) => ({
           dishId: Number(i.dishId),
           quantity: Number(i.quantity) || 1,

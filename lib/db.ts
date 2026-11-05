@@ -1654,6 +1654,7 @@ export interface CreateOrderParams {
   pointsUsed?: number;
   notes?: string;
   userId?: string;
+  instantRebate?: number; // 静态模式前端选定的随机立减（服务端校验范围后采用，保证弹窗金额=落库金额）
   items: { dishId: number; quantity: number; taste?: string }[];
 }
 
@@ -1670,6 +1671,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     pointsUsed = 0,
     notes = '',
     userId,
+    instantRebate: clientRebate,
     items,
   } = params;
 
@@ -1731,10 +1733,17 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
   const rebateCeiling = dynamicPayActive
     ? 0
     : Math.round((total - pointsDiscount) * pointsRatio * 100) / 100;
-  const instantRebate =
+  let instantRebate =
     rebateCeiling >= 0.01
       ? Math.round((0.01 + Math.random() * (rebateCeiling - 0.01)) * 100) / 100
       : 0;
+  // 静态模式前端选定随机立减（支付弹窗展示的金额）→ 服务端校验范围后采用，
+  // 保证"顾客照弹窗所付 = 订单落库金额"；超出上限则收敛到上限，低于 0.01 忽略走服务端随机
+  if (!dynamicPayActive && typeof clientRebate === 'number' && isFinite(clientRebate)) {
+    const r = Math.round(clientRebate * 100) / 100;
+    if (r >= 0.01 && r <= rebateCeiling + 0.005) instantRebate = r;
+    else if (r > rebateCeiling + 0.005) instantRebate = rebateCeiling;
+  }
 
   const finalAmount = Math.max(0, Math.round((total - pointsDiscount - instantRebate) * 100) / 100);
   const pointsEarned = instantRebate > 0 ? 0 : Math.round(finalAmount * pointsRatio * 100) / 100;

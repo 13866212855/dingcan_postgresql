@@ -63,22 +63,34 @@ const pointsEarned = instantRebate > 0 ? 0 : Math.round(finalAmount * pointsRati
 
 ```
 handleStartCheckout(orderData):
+  匿名拦截（无姓名/手机号）→ 暂存 orderData → 弹「下单登记」窗（姓名+手机必填，
+    地址外卖必填/堂食选填，POST /api/users 保存）→ 保存成功后继续
   餐后结账堂食 → executeSubmitOrder('未支付') → 订单状态弹窗（不弹支付）
-  餐前/外卖   → executeSubmitOrder('未支付', {deferSuccessUi:true})   ← 订单先落库
-              → setCreatedPendingOrder(order)
-              → 通道 ready ? openDynamicPay(order.id) : 直接开静态码弹窗
+  动态通道就绪 → executeSubmitOrder('未支付', {deferSuccessUi:true})   ← 先建单（回调挂单必须）
+              → POST /api/pay/create → 弹动态弹窗（轮询到账自动确认）
+  静态码模式  → 前端选定随机立减 staticRebate（上限=净额×比例）
+              → 暂存 orderData → 弹静态码弹窗（此刻不建单！）
+              → 顾客付款过门禁点「我已完成扫码支付」→ executeSubmitOrder('已支付',
+                 {instantRebate: staticRebate})   ← 此刻才创建订单（已支付）
 
-openDynamicPay(orderId): POST /api/pay/create
-  成功有 payUrl → 弹动态弹窗（手机跳转/PC二维码，2.5s轮询 status，到账自动确认关闭）
-  alreadyPaid/freeOrder → finishOrderSuccess()
-  失败/异常      → 弹静态码弹窗（fallback，订单已建，确认走 PATCH）
+PaymentModal 门禁：移动端 = 随机延迟(20~28s)已过 && visibilitychange 切出→切回已发生
+  （返回信号硬性，时间到也不放行）；桌面端 = 随机延迟已过。
+  门禁未过显示静态文案「请先完成二维码支付」（无倒计时/动画——状态盲化）。
 
-静态码确认按钮 = PATCH /api/orders/[id] {paymentStatus:'已支付'}（只翻转状态，不建单）
-finishOrderSuccess()：关弹窗 → activeOrderId=订单 → 刷新用户积分/桌台
+静态确认 = POST /api/orders（paymentStatus:'已支付', instantRebate）——订单此刻才落库。
+动态回退特例（曾先建单）：确认 = PATCH /api/orders/[id] {paymentStatus:'已支付'}。
+finishOrderSuccess()：关弹窗 → activeOrderId=订单 → 刷新用户积分/桌台。
 ```
 
-订单详情页「立即结账」：同一 PaymentModal，动态就绪先调 create，未就绪静态码；PaymentModal 关键 props：
-`dynamicPay {orderId,payUrl,qrCodeUrl,tradeOrderId,amount,expiresAt} / tenantId / onPaid / onRefreshPay / isCreatingPay`。
+服务端 createOrder 对客户端 instantRebate 的校验采用：
+```ts
+if (!dynamicPayActive && typeof clientRebate === 'number' && isFinite(clientRebate)) {
+  const r = Math.round(clientRebate * 100) / 100;
+  if (r >= 0.01 && r <= rebateCeiling + 0.005) instantRebate = r;      // 范围内→采用
+  else if (r > rebateCeiling + 0.005) instantRebate = rebateCeiling;   // 超限→收敛
+}                                                                       // 非法→忽略走随机
+```
+恶意传值最大损失=立减上限本身；「弹窗金额=落库金额」一致性由前端选定+服务端校验共同保证。
 
 ## 5. 验证方法论（四件套，无本地构建环境也能做）
 

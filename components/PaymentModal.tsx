@@ -57,17 +57,16 @@ export default function PaymentModal({
 
   const isDynamic = !!dynamicPay;
 
-  // 静态收款码模式：确认按钮三重门禁——
+  // 静态收款码模式：确认按钮门禁——
   // ① 基础延迟：每次打开随机 20~28 秒（预留真实支付时间；随机化让"干等过期"无法掐点）
-  // ② 移动端额外要求：长按过二维码（识别手势）且发生过"页面切出→切回"（进入微信付款面板再返回）
-  // ③ 45 秒防锁死逃生口：即使信号未齐也放行（避免真实付款顾客被卡死无法确认）
+  // ② 移动端硬性门禁：必须检测到"页面切出→切回"往返（顾客真的离开本页去付款再回来）——
+  //    该信号未达成时，即使时间耗尽确认按钮也不放行
+  // ③ 桌面端（顾客用手机扫屏幕，无切页行为）：仅需随机延迟门
   // UI 状态盲化：占位按钮不显示倒计时/进度动画，计时阶段与动作门禁阶段共用同一文案——
   // 未付款者无法从界面分辨还差多久、卡在哪道门
   const CONFIRM_DELAY_BASE = 20;
   const CONFIRM_DELAY_JITTER = 9; // +0~8s → 每次打开 20~28s 随机
-  const CONFIRM_ESCAPE_SECONDS = 45;
   const [confirmDelayLeft, setConfirmDelayLeft] = React.useState(0);
-  const [elapsedSec, setElapsedSec] = React.useState(0);
   const [longPressed, setLongPressed] = React.useState(false);
   const [returnedAfterHidden, setReturnedAfterHidden] = React.useState(false);
   const pressStartRef = React.useRef<number | null>(null);
@@ -75,12 +74,10 @@ export default function PaymentModal({
   React.useEffect(() => {
     if (!isOpen || isDynamic) return;
     setConfirmDelayLeft(CONFIRM_DELAY_BASE + Math.floor(Math.random() * CONFIRM_DELAY_JITTER));
-    setElapsedSec(0);
     setLongPressed(false);
     setReturnedAfterHidden(false);
     const t = setInterval(() => {
       setConfirmDelayLeft((s) => (s > 0 ? s - 1 : 0));
-      setElapsedSec((s) => s + 1);
     }, 1000);
     return () => clearInterval(t);
   }, [isOpen, isDynamic]);
@@ -166,9 +163,10 @@ export default function PaymentModal({
   const secondsLeft = isDynamic ? Math.max(0, Math.floor((dynamicPay.expiresAt - now) / 1000)) : 0;
   const qrExpired = isDynamic && secondsLeft <= 0;
 
-  // 确认按钮门禁判定（仅静态模式使用）
-  const actionGatesPassed =
-    !isMobile || (longPressed && returnedAfterHidden) || elapsedSec >= CONFIRM_ESCAPE_SECONDS;
+  // 确认按钮门禁判定（仅静态模式使用）：
+  // 移动端 = 随机延迟已过 && "切出→切回"往返已发生（硬性，时间到也不放行）；
+  // 桌面端 = 随机延迟已过
+  const actionGatesPassed = !isMobile ? true : returnedAfterHidden;
   const canConfirmStatic = confirmDelayLeft === 0 && actionGatesPassed;
 
   // 长按识别手势探测（≥400ms 视为长按；不阻断系统菜单，只做记录）
