@@ -392,7 +392,8 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
         </div>
       </div>
 
-      {/* 就餐桌号规则运营配置快捷卡片 */}
+      {/* 就餐桌号规则运营配置快捷卡片（仅当门店已配置餐桌时显示——0餐桌店该规则不作用于前端） */}
+      {tables.length > 0 ? (
       <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-3">
           <div className="flex items-center space-x-2">
@@ -481,6 +482,15 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
           </button>
         </div>
       </div>
+      ) : (
+        <div className="p-4 bg-neutral-50 border border-neutral-200/80 rounded-2xl flex items-start space-x-2.5 text-[11px] text-neutral-500">
+          <Sliders className="w-4 h-4 text-neutral-300 shrink-0 mt-0.5" />
+          <span>
+            当前门店未配置任何餐桌，桌号规则不会作用于前端（顾客下单自动按「自取/自由入座」处理，无需指定桌号），相关配置已隐藏。
+            若日后需要启用桌号管理，在下方添加餐桌后本配置卡将自动恢复显示。
+          </span>
+        </div>
+      )}
 
       {/* Summary Statistics */}
       <div className="grid grid-cols-3 gap-3">

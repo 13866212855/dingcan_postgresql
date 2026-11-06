@@ -119,6 +119,15 @@ export default function CartDrawer({
   const [deliveryAddress, setDeliveryAddress] = useState(user?.delivery_address || '');
   const [deliveryContact, setDeliveryContact] = useState(user?.delivery_contact || user?.name || '');
   const [deliveryPhone, setDeliveryPhone] = useState(user?.delivery_phone || user?.phone || '');
+
+  // 会员资料异步到位后回填空白字段（组件挂载早于资料加载的快照问题）；
+  // 只填空值，绝不覆盖顾客正在输入/已输入的内容
+  useEffect(() => {
+    if (!user) return;
+    setDeliveryAddress((v) => v || user.delivery_address || '');
+    setDeliveryContact((v) => v || user.delivery_contact || user.name || '');
+    setDeliveryPhone((v) => v || user.delivery_phone || user.phone || '');
+  }, [user]);
   const [isLocating, setIsLocating] = useState(false);
 
   // 方案 A 免费自动定位快捷填充

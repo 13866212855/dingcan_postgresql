@@ -429,12 +429,14 @@ export default function OrderingClient({
 
   // Called from CartDrawer checkout button
   const handleStartCheckout = async (orderData: CheckoutOrderData) => {
-    // 外卖订单（符合真实外卖业务）：新老用户点击去支付，一律弹窗核对或重新定位/修改送餐地址；
-    // 堂食订单：若本机从未登记过姓名与手机号，弹窗登记基本称呼与手机
-    const isDelivery = orderData.orderType === '外卖';
-    const missingContact = !user?.phone?.trim() || !user?.name?.trim();
+    // 只拦「信息缺失」的单：购物车已带齐联系人/手机（外卖含地址）就直接结算——
+    // 购物车的送餐信息表单本身就是填写处，绝不在同一次提交里二次弹窗询问
+    const hasContact =
+      (orderData.deliveryContact || '').trim() !== '' && (orderData.deliveryPhone || '').trim() !== '';
+    const hasAddress =
+      orderData.orderType !== '外卖' || (orderData.deliveryAddress || '').trim() !== '';
 
-    if (isDelivery || missingContact) {
+    if (!hasContact || !hasAddress) {
       setPendingCheckoutData(orderData);
       setIsCustomerInfoOpen(true);
       return;
