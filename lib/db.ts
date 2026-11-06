@@ -1363,6 +1363,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let smtp_pass = process.env.SMTP_PASS || 'rvlehugdnsmccajh';
   let notify_email_to = process.env.NOTIFY_EMAIL_TO || '527194933@qq.com';
   let smtp_timeout = 15; // 默认 15 秒 (跨国云平台推荐)
+  let amap_web_key = process.env.AMAP_WEB_KEY || ''; // 高德地图 Web 服务 API Key (可选免费额度)
 
   for (const row of res.rows) {
     if (row.key === 'payment_qr_code') payment_qr_code = row.value || '';
@@ -1418,6 +1419,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'smtp_pass' && row.value?.trim()) smtp_pass = row.value.trim();
     if (row.key === 'notify_email_to' && row.value?.trim()) notify_email_to = row.value.trim();
     if (row.key === 'smtp_timeout') smtp_timeout = Math.max(5, Math.min(60, Number(row.value) || 15));
+    if (row.key === 'amap_web_key') amap_web_key = (row.value || '').trim();
   }
 
   return {
@@ -1465,6 +1467,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     smtp_pass,
     notify_email_to,
     smtp_timeout,
+    amap_web_key,
   };
 }
 

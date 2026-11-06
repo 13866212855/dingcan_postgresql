@@ -56,6 +56,9 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [enablePayBefore, setEnablePayBefore] = useState(true);
   const [enablePayAfter, setEnablePayAfter] = useState(true);
 
+  // 高德地图免费 Web API Key（用于外卖精准定位逆地理转换，每天免费 5000 次）
+  const [amapWebKey, setAmapWebKey] = useState('');
+
   // 在线支付通道（虎皮椒）配置
   const [payMode, setPayMode] = useState<'static' | 'xunhupay'>('static');
   const [xhuAppid, setXhuAppid] = useState('');
@@ -122,6 +125,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           }
           setEnablePayBefore(data.data.enable_pay_before !== 0);
           setEnablePayAfter(data.data.enable_pay_after !== 0);
+          if (data.data.amap_web_key) setAmapWebKey(data.data.amap_web_key);
           // 在线支付通道配置加载（密钥不回显，仅显示是否已配置）
           setPayMode(data.data.pay_mode === 'xunhupay' ? 'xunhupay' : 'static');
           setXhuAppid(data.data.xhu_appid || '');
@@ -391,6 +395,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           table_input_mode: tableInputMode,
           enable_pay_before: enablePayBefore ? 1 : 0,
           enable_pay_after: enablePayAfter ? 1 : 0,
+          amap_web_key: amapWebKey.trim(),
           pay_mode: payMode,
           xhu_appid: xhuAppid.trim(),
           ...(xhuSecretInput.trim() !== '' ? { xhu_secret: xhuSecretInput.trim() } : {}),
@@ -553,6 +558,31 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                 ★ <strong>两项均未勾选</strong>：系统安全兜底机制生效，前端<strong>不显示切换按钮</strong>，自动默认按<strong>【到店堂食】</strong>模式处理。
               </p>
             )}
+          </div>
+
+          {/* 高德地图 Web 服务 API Key 配置（可选免费额度升级） */}
+          <div className="p-4 bg-amber-50/50 rounded-xl border border-amber-200/70 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-neutral-800 flex items-center space-x-1.5">
+                <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                <span>外卖智能定位逆地理转换（可选高精度增强 Key）</span>
+              </label>
+              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-medium">
+                默认免配置即用（自带双重免费定位解析）
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-500 leading-relaxed">
+              外卖顾客下单时支持一键自动定位。系统默认自带免签公共逆地理服务；若您希望达到国内最高精度（精确至小区与门牌号），可在此填入您的高德地图开放平台 <strong>Web 服务类型的 Key</strong>（个人开发者可免费申请，<strong>每天 5,000 次免费调用额度</strong>，单店终身免费）。
+            </p>
+            <div className="relative">
+              <input
+                type="text"
+                value={amapWebKey}
+                onChange={(e) => setAmapWebKey(e.target.value)}
+                placeholder="留空即使用系统内置免签定位；亦可填入高德 Web 服务 Key (如: 32位十六进制字符串)"
+                className="w-full px-3 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
           </div>
         </div>
 
@@ -1004,7 +1034,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               <div>
                 <h3 className="text-sm font-bold text-neutral-900">在线支付通道（虎皮椒 · 动态收款自动确认）</h3>
                 <p className="text-[11px] text-neutral-400">
-                  每单自动生成带金额的动态二维码/跳转链接，支付成功回调自动确认到账，顾客无需手动声明"已支付"
+                  每单自动生成带金额的动态二维码/跳转链接，支付成功回调自动确认到账，顾客无需手动声明【已支付】
                 </p>
               </div>
             </div>
@@ -1030,7 +1060,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                 <span>静态收款码模式（默认）</span>
               </div>
               <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
-                展示店内统一收款码，顾客付款后经"长按识别+返回页面+延迟"三重门禁自助确认。
+                展示店内统一收款码，顾客付款后经【长按识别+返回页面+延迟】三重门禁自助确认。
                 积分权益即时兑现：立减金额在 0.01 元 ~ 积分比例金额之间随机，例如比例 1% 时 18 元实付在 17.82 ~ 17.99 元间随机——每单尾数不同，方便按金额对账（该单不再另送积分）。
               </p>
             </button>
@@ -1048,7 +1078,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                 <span>动态在线支付（虎皮椒）</span>
               </div>
               <p className="text-[11px] text-neutral-500 mt-1 leading-relaxed">
-                金额自动带上、回调自动确认到账，彻底杜绝谎报"已支付"。需下方三要素配置完整后生效。
+                金额自动带上、回调自动确认到账，彻底杜绝谎报【已支付】。需下方三要素配置完整后生效。
               </p>
             </button>
           </div>

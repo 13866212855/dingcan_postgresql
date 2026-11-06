@@ -429,8 +429,12 @@ export default function OrderingClient({
 
   // Called from CartDrawer checkout button
   const handleStartCheckout = async (orderData: CheckoutOrderData) => {
-    // 功能一：匿名用户（本机从未登记姓名/手机号）先弹信息收集窗，保存后自动继续结算
-    if (!user?.phone?.trim() || !user?.name?.trim()) {
+    // 外卖订单（符合真实外卖业务）：新老用户点击去支付，一律弹窗核对或重新定位/修改送餐地址；
+    // 堂食订单：若本机从未登记过姓名与手机号，弹窗登记基本称呼与手机
+    const isDelivery = orderData.orderType === '外卖';
+    const missingContact = !user?.phone?.trim() || !user?.name?.trim();
+
+    if (isDelivery || missingContact) {
       setPendingCheckoutData(orderData);
       setIsCustomerInfoOpen(true);
       return;
@@ -438,13 +442,22 @@ export default function OrderingClient({
     await continueCheckout(orderData);
   };
 
-  // 信息登记完成 → 继续被中断的结算流程
+  // 地址/联系人信息确认并保存成功 → 将最新地址同步更新到当前待结订单后继续结算
   const handleCustomerInfoSaved = (saved: AppUser) => {
     setUser(saved);
     setIsCustomerInfoOpen(false);
     const od = pendingCheckoutData;
     setPendingCheckoutData(null);
-    if (od) continueCheckout(od);
+    if (od) {
+      // 确保将用户在弹窗中最新修改的收件地址与联系人赋给该笔结算数据
+      const updatedOrderData: CheckoutOrderData = {
+        ...od,
+        deliveryAddress: saved.delivery_address || od.deliveryAddress,
+        deliveryContact: saved.delivery_contact || saved.name || od.deliveryContact,
+        deliveryPhone: saved.delivery_phone || saved.phone || od.deliveryPhone,
+      };
+      continueCheckout(updatedOrderData);
+    }
   };
 
   const continueCheckout = async (orderData: CheckoutOrderData) => {
@@ -873,6 +886,7 @@ export default function OrderingClient({
         }}
         onSaved={handleCustomerInfoSaved}
         orderType={pendingCheckoutData?.orderType ?? '堂食'}
+        initialUser={user}
         tenantId={tenantId}
       />
 

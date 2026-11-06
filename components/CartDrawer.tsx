@@ -20,6 +20,7 @@ import {
   User,
   Phone,
   Home,
+  Loader2,
 } from 'lucide-react';
 import { CartItem, Dish, DiningTable, AppUser, AppSettings } from '@/types';
 
@@ -118,6 +119,39 @@ export default function CartDrawer({
   const [deliveryAddress, setDeliveryAddress] = useState(user?.delivery_address || '');
   const [deliveryContact, setDeliveryContact] = useState(user?.delivery_contact || user?.name || '');
   const [deliveryPhone, setDeliveryPhone] = useState(user?.delivery_phone || user?.phone || '');
+  const [isLocating, setIsLocating] = useState(false);
+
+  // 方案 A 免费自动定位快捷填充
+  const handleAutoLocateAddress = () => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      setErrorMsg('当前设备不支持地理定位，请手动输入送达地址');
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const res = await fetch(`/api/location/geocode?lat=${latitude}&lng=${longitude}`);
+          const json = await res.json();
+          if (json.success && json.data?.formattedAddress) {
+            setDeliveryAddress(json.data.formattedAddress);
+          } else {
+            setErrorMsg('解析当前位置失败，请手动填写');
+          }
+        } catch {
+          setErrorMsg('定位网络超时，请手动填写送达地址');
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      () => {
+        setIsLocating(false);
+        setErrorMsg('获取定位失败，请允许定位权限或手动输入');
+      },
+      { enableHighAccuracy: true, timeout: 9000, maximumAge: 60000 }
+    );
+  };
 
   // 3. 支付付款时机配置解析：
   const enablePayBefore = settings?.enable_pay_before !== 0;
@@ -447,9 +481,20 @@ export default function CartDrawer({
               </div>
 
               <div>
-                <label className="block text-[11px] text-neutral-600 mb-1">
-                  送达地址（包含楼栋门牌号）
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] text-neutral-600">
+                    送达地址（包含楼栋门牌号）
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isLocating}
+                    onClick={handleAutoLocateAddress}
+                    className="inline-flex items-center space-x-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200 cursor-pointer disabled:opacity-60"
+                  >
+                    {isLocating ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <MapPin className="w-2.5 h-2.5" />}
+                    <span>{isLocating ? '定位中...' : '📍 自动定位'}</span>
+                  </button>
+                </div>
                 <div className="relative">
                   <Home className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-2.5" />
                   <input

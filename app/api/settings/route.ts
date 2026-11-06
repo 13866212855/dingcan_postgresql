@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
       smtp_pass,
       notify_email_to,
       smtp_timeout,
+      amap_web_key,
     } = body;
 
     if (enable_dine_in !== undefined) {
@@ -236,6 +237,9 @@ export async function POST(req: NextRequest) {
     if (smtp_timeout !== undefined) {
       const timeoutSec = Math.max(5, Math.min(60, parseInt(String(smtp_timeout)) || 15));
       await updateSetting('smtp_timeout', String(timeoutSec), tenantId);
+    }
+    if (amap_web_key !== undefined) {
+      await updateSetting('amap_web_key', String(amap_web_key).trim(), tenantId);
     }
 
     const updated = await getSettings(tenantId);

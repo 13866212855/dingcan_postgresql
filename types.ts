@@ -154,6 +154,8 @@ export interface AppSettings {
   smtp_pass?: string; // QQ 邮箱 16 位 SMTP 独立授权码 (如: rvlehugdnsmccajh)
   notify_email_to?: string; // 接收订单通知的目标邮箱，默认 527194933@qq.com
   smtp_timeout?: number; // 网络连接超时（秒），默认 15 秒
+  // 高德地图 Web 服务 API Key (可选，个人免费每日5000次，用于外卖精准逆地理自动定位)
+  amap_web_key?: string;
 }
 
 export interface LLMConfig {

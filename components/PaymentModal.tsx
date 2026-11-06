@@ -52,7 +52,7 @@ export default function PaymentModal({
   tenantId = 'default',
 }: PaymentModalProps) {
   const [imgError, setImgError] = React.useState(false);
-  const [now, setNow] = React.useState(Date.now());
+  const [now, setNow] = React.useState(() => Date.now());
   const [paidDetected, setPaidDetected] = React.useState(false);
 
   const isDynamic = !!dynamicPay;
@@ -73,13 +73,19 @@ export default function PaymentModal({
 
   React.useEffect(() => {
     if (!isOpen || isDynamic) return;
-    setConfirmDelayLeft(CONFIRM_DELAY_BASE + Math.floor(Math.random() * CONFIRM_DELAY_JITTER));
-    setLongPressed(false);
-    setReturnedAfterHidden(false);
+    const initialDelay = CONFIRM_DELAY_BASE + Math.floor(Math.random() * CONFIRM_DELAY_JITTER);
+    const delayTimer = setTimeout(() => {
+      setConfirmDelayLeft(initialDelay);
+      setLongPressed(false);
+      setReturnedAfterHidden(false);
+    }, 0);
     const t = setInterval(() => {
       setConfirmDelayLeft((s) => (s > 0 ? s - 1 : 0));
     }, 1000);
-    return () => clearInterval(t);
+    return () => {
+      clearTimeout(delayTimer);
+      clearInterval(t);
+    };
   }, [isOpen, isDynamic]);
 
   // 可见性往返探测：微信内长按识别成功→收款面板弹出→本页 hidden；付款完成返回→ visible
@@ -115,7 +121,6 @@ export default function PaymentModal({
   // 倒计时 tick（每秒）
   React.useEffect(() => {
     if (!isOpen || !isDynamic) return;
-    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [isOpen, isDynamic]);
@@ -150,11 +155,14 @@ export default function PaymentModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isDynamic, paidDetected, dynamicPay?.orderId, tenantId]);
 
-  // 打开新弹窗会话时重置内部状态
+  // 打开新弹窗会话时重置内部状态（异步或事件触发，避免同步触发级联重渲）
   React.useEffect(() => {
     if (isOpen) {
-      setPaidDetected(false);
-      setImgError(false);
+      const resetTimer = setTimeout(() => {
+        setPaidDetected(false);
+        setImgError(false);
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
   }, [isOpen, dynamicPay?.orderId]);
 
