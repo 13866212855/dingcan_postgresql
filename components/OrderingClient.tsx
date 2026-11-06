@@ -97,6 +97,14 @@ export default function OrderingClient({
   // pendingCheckoutData 暂存购物车快照，前端选定随机立减 staticRebate 保证"弹窗金额=落库金额"
   const [pendingCheckoutData, setPendingCheckoutData] = useState<CheckoutOrderData | null>(null);
   const [staticRebate, setStaticRebate] = useState(0);
+  // 静态支付会话快照：弹窗打开时定格「实付金额/立减/信息文案」——
+  // 提交期间临时状态清空后，金额区仍稳定显示顾客实际支付的数字（防提交中金额跳回原价）
+  const [staticPaySnapshot, setStaticPaySnapshot] = useState<{
+    amount: number;
+    rebate: number;
+    pointsDiscount: number;
+    info: string;
+  } | null>(null);
   // 动态在线支付（虎皮椒）：订单已创建为未支付，等待通道回调自动确认
   const [dynamicPayData, setDynamicPayData] = useState<DynamicPayData | null>(null);
   const [createdPendingOrder, setCreatedPendingOrder] = useState<Order | null>(null);
@@ -386,6 +394,7 @@ export default function OrderingClient({
     const order = createdPendingOrder;
     setIsPaymentModalOpen(false);
     setDynamicPayData(null);
+    setStaticPaySnapshot(null);
     if (order) {
       setActiveOrderId(order.id);
       setIsNewlyCreatedOrder(true);
@@ -492,6 +501,15 @@ export default function OrderingClient({
         : 0;
     setStaticRebate(rebate);
     setPendingCheckoutData(orderData);
+    setStaticPaySnapshot({
+      amount: Math.max(0, Math.round((netAmount - rebate) * 100) / 100),
+      rebate,
+      pointsDiscount: orderData.pointsDiscount ?? 0,
+      info:
+        orderData.orderType === '外卖'
+          ? `送餐外卖 · ${orderData.deliveryAddress}`
+          : `到店堂食 · ${orderData.tableNo}`,
+    });
     setIsPaymentModalOpen(true);
   };
 
@@ -521,12 +539,21 @@ export default function OrderingClient({
       return;
     }
     if (pendingCheckoutData) {
-      // 静态模式（功能三）：此刻才创建订单（已支付），前端随机立减随单提交（服务端校验范围后采用）
+      // 静态模式（功能三）：此刻才创建订单（已支付），前端随机立减随单提交（服务端校验范围后采用）。
+      // 金额显示由 staticPaySnapshot 定格——临时状态必须在提交完成后才清理，
+      // 否则提交中弹窗金额会跳回购物车原价，顾客误以为自己未足额付款
       const od = pendingCheckoutData;
       const rebate = staticRebate;
-      setPendingCheckoutData(null);
-      setStaticRebate(0);
-      await executeSubmitOrder(od, '已支付', { instantRebate: rebate });
+      try {
+        await executeSubmitOrder(od, '已支付', { instantRebate: rebate });
+        setPendingCheckoutData(null);
+        setStaticRebate(0);
+        setStaticPaySnapshot(null);
+      } catch (e: any) {
+        console.error(e);
+        alert(e?.message || '下单失败，请检查网络后重试');
+      }
+      return;
     }
   };
 
@@ -854,21 +881,17 @@ export default function OrderingClient({
         amount={
           createdPendingOrder
             ? createdPendingOrder.final_amount
-            : pendingCheckoutData
-            ? Math.max(0, Math.round(((pendingCheckoutData.finalAmount ?? totalPrice) - staticRebate) * 100) / 100)
+            : staticPaySnapshot
+            ? staticPaySnapshot.amount
             : totalPrice
         }
         originalAmount={totalPrice}
-        pointsDiscount={createdPendingOrder ? createdPendingOrder.points_discount : pendingCheckoutData?.pointsDiscount ?? 0}
+        pointsDiscount={createdPendingOrder ? createdPendingOrder.points_discount : staticPaySnapshot?.pointsDiscount ?? 0}
         qrCodeUrl={settings?.payment_qr_code}
         tableOrOrderInfo={
           createdPendingOrder
             ? `订单号: ${createdPendingOrder.id} · ${createdPendingOrder.order_type === '外卖' ? '送餐到家' : createdPendingOrder.table_no}`
-            : pendingCheckoutData
-            ? pendingCheckoutData.orderType === '外卖'
-              ? `送餐外卖 · ${pendingCheckoutData.deliveryAddress}`
-              : `到店堂食 · ${pendingCheckoutData.tableNo}`
-            : ''
+            : staticPaySnapshot?.info ?? ''
         }
         isConfirming={isSubmitting}
         dynamicPay={dynamicPayData}
