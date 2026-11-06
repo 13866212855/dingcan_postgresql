@@ -689,7 +689,7 @@ export default function OrderingClient({
               <p className="text-xs text-neutral-400 mt-1">请尝试切换分类或搜索其他关键词</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredDishes.map((dish) => {
                 const inCartQty = cart[dish.id]?.quantity || 0;
                 const isSoldOut = dish.status !== 1;
@@ -697,13 +697,13 @@ export default function OrderingClient({
                 return (
                   <div
                     key={dish.id}
-                    className={`bg-white rounded-2xl border border-neutral-200/70 overflow-hidden shadow-2xs hover:shadow-md transition-shadow flex flex-col ${
-                      isSoldOut ? 'opacity-70 grayscale-[30%]' : ''
+                    className={`bg-white rounded-2xl border border-neutral-200/80 overflow-hidden shadow-2xs hover:shadow-md transition-all flex flex-row sm:flex-col ${
+                      isSoldOut ? 'opacity-70 grayscale-[25%]' : ''
                     }`}
                   >
-                    {/* Dish Image */}
+                    {/* Dish Image: 移动端采用经典 1:1 正方形图 (104x104px / 112x112px)，PC 端保持卡片顶图 */}
                     <div
-                      className="relative h-44 w-full bg-neutral-100 cursor-pointer overflow-hidden group"
+                      className="relative w-28 h-28 sm:w-full sm:h-44 shrink-0 bg-neutral-100 cursor-pointer overflow-hidden group rounded-l-2xl sm:rounded-l-none sm:rounded-t-2xl"
                       onClick={() => setActiveDish(dish)}
                     >
                       <Image
@@ -713,67 +713,84 @@ export default function OrderingClient({
                         className="object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
                       />
-                      <div className="absolute top-2.5 left-2.5">
-                        <span className="text-[10px] bg-black/60 backdrop-blur-xs text-white px-2 py-0.5 rounded-full font-medium">
+                      {/* 分类标签微标 */}
+                      <div className="absolute top-2 left-2">
+                        <span className="text-[10px] bg-black/60 backdrop-blur-xs text-white px-1.5 py-0.5 rounded-md font-medium">
                           {dish.category}
                         </span>
                       </div>
                       {isSoldOut && (
-                        <div className="absolute inset-0 bg-black/40 backdrop-blur-2xs flex items-center justify-center">
-                          <span className="bg-rose-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">
+                        <div className="absolute inset-0 bg-black/50 backdrop-blur-2xs flex items-center justify-center">
+                          <span className="bg-rose-600 text-white text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-3 sm:py-1 rounded-full shadow-md">
                             已售罄
                           </span>
                         </div>
                       )}
                     </div>
 
-                    {/* Dish Information */}
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                    {/* Dish Information: 右侧/下方图文区 */}
+                    <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between min-w-0">
                       <div>
-                        <h3
-                          onClick={() => setActiveDish(dish)}
-                          className="font-bold text-neutral-900 text-sm hover:text-amber-600 transition-colors cursor-pointer line-clamp-1"
-                        >
-                          {dish.name}
-                        </h3>
-                        <p className="text-xs text-neutral-500 line-clamp-2 mt-1 leading-relaxed">
+                        <div className="flex items-start justify-between gap-1">
+                          <h3
+                            onClick={() => setActiveDish(dish)}
+                            className="font-bold text-neutral-900 text-sm sm:text-base hover:text-amber-600 transition-colors cursor-pointer line-clamp-1 leading-snug"
+                          >
+                            {dish.name}
+                          </h3>
+                        </div>
+                        <p className="text-[11px] sm:text-xs text-neutral-500 line-clamp-2 mt-1 leading-relaxed">
                           {dish.description || '精选优质新鲜食材，大厨地道现炒。'}
                         </p>
                       </div>
 
-                      {/* Price & Cart Actions */}
-                      <div className="flex items-center justify-between pt-1">
-                        <div className="text-rose-600 font-black text-lg leading-none">
-                          <span className="text-xs font-bold">¥</span>
-                          {dish.price}
+                      {/* Price & Cart Actions: 左侧大红价格 + 右侧灵巧加购按钮 */}
+                      <div className="flex items-center justify-between pt-2 mt-auto">
+                        <div className="text-rose-600 font-black text-base sm:text-lg leading-none font-mono flex items-baseline">
+                          <span className="text-xs font-bold mr-0.5">¥</span>
+                          <span>{dish.price}</span>
                         </div>
 
                         {!isSoldOut && (
-                          <div className="flex items-center space-x-2">
+                          <div className="flex items-center space-x-1.5 sm:space-x-2">
                             {inCartQty > 0 ? (
-                              <>
+                              <div className="flex items-center bg-amber-50 rounded-full border border-amber-200/80 p-0.5 shadow-2xs">
                                 <button
-                                  onClick={() => removeFromCart(dish)}
-                                  className="w-7 h-7 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 flex items-center justify-center active:scale-90 transition-transform"
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeFromCart(dish);
+                                  }}
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white hover:bg-neutral-100 text-neutral-700 flex items-center justify-center active:scale-90 transition-transform shadow-2xs cursor-pointer"
+                                  title="减少一份"
                                 >
-                                  <Minus className="w-3.5 h-3.5" />
+                                  <Minus className="w-3 h-3 text-neutral-600" />
                                 </button>
-                                <span className="text-xs font-bold text-neutral-900 w-4 text-center">
+                                <span className="text-xs font-bold text-neutral-900 w-5 text-center font-mono">
                                   {inCartQty}
                                 </span>
                                 <button
-                                  onClick={() => addToCart(dish)}
-                                  className="w-7 h-7 rounded-full bg-amber-500 hover:bg-amber-600 text-white flex items-center justify-center active:scale-90 transition-transform shadow-xs"
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    addToCart(dish);
+                                  }}
+                                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white flex items-center justify-center active:scale-90 transition-transform shadow-xs cursor-pointer"
+                                  title="增加一份"
                                 >
-                                  <Plus className="w-3.5 h-3.5" />
+                                  <Plus className="w-3 h-3" />
                                 </button>
-                              </>
+                              </div>
                             ) : (
                               <button
-                                onClick={() => addToCart(dish)}
-                                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold flex items-center space-x-1 active:scale-95 transition-all shadow-xs"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToCart(dish);
+                                }}
+                                className="px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold flex items-center space-x-1 active:scale-95 transition-all shadow-xs cursor-pointer"
                               >
-                                <Plus className="w-3.5 h-3.5" />
+                                <Plus className="w-3 h-3 stroke-[2.5]" />
                                 <span>选购</span>
                               </button>
                             )}

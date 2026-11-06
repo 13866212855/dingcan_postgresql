@@ -79,52 +79,50 @@ export default function Navbar({
         </Link>
 
         {/* Right Action buttons */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
           {/* Table Badge: 当后台无设置桌位时完全隐藏，界面更简洁；仅当后台配置了餐桌或顾客扫码入座时才显示 */}
           {(hasTables || (isTableLocked && Boolean(currentTable))) && (
             <button
               id="btn-change-table"
               onClick={onChangeTable}
               title={isTableLocked ? '扫码入座锁定中' : '点击切换桌号'}
-              className={`flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ${
+              className={`flex items-center space-x-1 text-xs font-medium px-2 py-1.5 rounded-xl border transition-colors cursor-pointer ${
                 isTableLocked
                   ? 'bg-amber-100 text-amber-900 border-amber-300'
                   : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
               }`}
             >
-              <MapPin className="w-3.5 h-3.5 text-amber-600" />
-              <span>{currentTable && currentTable !== '自取/未指定桌位' ? currentTable : '选择桌号'}</span>
+              <MapPin className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="truncate max-w-[70px] sm:max-w-none">
+                {currentTable && currentTable !== '自取/未指定桌位' ? currentTable : '选择桌号'}
+              </span>
               {isTableLocked && (
-                <span className="text-[10px] bg-amber-200 text-amber-900 px-1 py-0.2 rounded font-normal">
+                <span className="text-[10px] bg-amber-200 text-amber-900 px-1 py-0.2 rounded font-normal shrink-0">
                   已扫码
                 </span>
               )}
             </button>
           )}
 
-          {/* Member & Points button */}
+          {/* Member & Points button: 单行徽章设计，杜绝积分文字折叠换行 */}
           {onOpenMemberModal && (
             <button
               id="btn-member-center"
               onClick={onOpenMemberModal}
-              className="flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-orange-50 text-orange-800 border border-orange-200 hover:bg-orange-100 transition-colors"
+              title="会员中心与积分抵现"
+              className="flex items-center space-x-1 text-xs font-semibold px-2 sm:px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 text-amber-900 border border-amber-200/80 hover:bg-amber-100/70 transition-all cursor-pointer active:scale-95"
             >
               {user?.is_verified ? (
-                <UserCheck className="w-3.5 h-3.5 text-orange-600" />
+                <UserCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               ) : (
-                <Award className="w-3.5 h-3.5 text-orange-500" />
+                <Award className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               )}
-              <span className="hidden sm:inline">
-                {user?.is_verified ? user.name || '实名会员' : '实名/积分'}
+              <span className="whitespace-nowrap">
+                {user?.is_verified ? (user.name ? user.name.slice(0, 3) : '会员') : '积分'}
               </span>
-              <span className="sm:hidden">
-                {user?.is_verified ? '会员' : '积分'}
+              <span className="text-[11px] font-black text-rose-600 font-mono bg-white/90 px-1.5 py-0.2 rounded-full border border-amber-200/60 shadow-2xs">
+                {user?.points !== undefined ? Number(user.points).toFixed(1).replace(/\.0$/, '') : '0'}
               </span>
-              {user && user.points > 0 && (
-                <span className="ml-0.5 text-[10px] bg-orange-200 text-orange-900 font-bold px-1 rounded-full">
-                  {user.points}分
-                </span>
-              )}
             </button>
           )}
 
@@ -132,13 +130,14 @@ export default function Navbar({
           <button
             id="btn-my-orders"
             onClick={onOpenOrders}
-            className="relative flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+            title="查看我的全部历史订单"
+            className="relative flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-xl bg-neutral-100 text-neutral-800 hover:bg-neutral-200 transition-colors cursor-pointer active:scale-95"
           >
-            <ReceiptText className="w-3.5 h-3.5 text-neutral-600" />
-            <span>我的订单</span>
+            <ReceiptText className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+            <span className="whitespace-nowrap">订单</span>
             {orderCount > 0 && (
-              <span className="ml-0.5 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-rose-500 rounded-full">
-                {orderCount}
+              <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-black text-white bg-rose-500 rounded-full shadow-xs">
+                {orderCount > 99 ? '99+' : orderCount}
               </span>
             )}
           </button>

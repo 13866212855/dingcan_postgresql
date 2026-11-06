@@ -124,9 +124,12 @@ export default function CartDrawer({
   // 只填空值，绝不覆盖顾客正在输入/已输入的内容
   useEffect(() => {
     if (!user) return;
-    setDeliveryAddress((v) => v || user.delivery_address || '');
-    setDeliveryContact((v) => v || user.delivery_contact || user.name || '');
-    setDeliveryPhone((v) => v || user.delivery_phone || user.phone || '');
+    const t = setTimeout(() => {
+      setDeliveryAddress((v) => v || user.delivery_address || '');
+      setDeliveryContact((v) => v || user.delivery_contact || user.name || '');
+      setDeliveryPhone((v) => v || user.delivery_phone || user.phone || '');
+    }, 0);
+    return () => clearTimeout(t);
   }, [user]);
   const [isLocating, setIsLocating] = useState(false);
 
