@@ -767,6 +767,7 @@ export default function AdminPage() {
         (o.delivery_phone && o.delivery_phone.includes(orderSearchQuery)) ||
         (o.customer_name && o.customer_name.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         (o.customer_phone && o.customer_phone.includes(orderSearchQuery)) ||
+        (o.customer_address && o.customer_address.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         (o.notes && o.notes.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         o.items?.some((i) => i.dish_name.toLowerCase().includes(orderSearchQuery.toLowerCase()));
       return matchStatus && matchSearch;
@@ -1517,11 +1518,19 @@ export default function AdminPage() {
                         </div>
                       )}
 
-                      {/* 顾客信息（堂食单也显示提交者，接单员可联系） */}
+                      {/* 顾客信息（含地址，接单员送餐依据；堂食单也显示） */}
                       {!isDelivery && order.customer_name && (
-                        <div className="px-3.5 py-2 bg-sky-50/50 border-b border-neutral-100 text-[11px] text-neutral-700">
-                          <span className="font-bold">顾客：</span>{order.customer_name}
-                          {order.customer_phone ? `（${order.customer_phone}）` : ''}
+                        <div className="px-3.5 py-2 bg-sky-50/50 border-b border-neutral-100 text-[11px] text-neutral-700 space-y-0.5">
+                          <div className="font-bold">
+                            顾客：{order.customer_name}
+                            {order.customer_phone ? `（${order.customer_phone}）` : ''}
+                          </div>
+                          {(order.customer_address || order.delivery_address) && (
+                            <div className="text-neutral-600 flex items-center space-x-1">
+                              <span className="font-bold">送达：</span>
+                              <span className="flex-1">{order.customer_address || order.delivery_address}</span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1966,13 +1975,23 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {selectedOrderDetail.customer_name && (
-                <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200 text-neutral-900 flex items-center justify-between text-xs">
-                  <span className="font-semibold text-neutral-600">下单顾客：</span>
-                  <span className="font-bold text-neutral-800">
-                    {selectedOrderDetail.customer_name}
-                    {selectedOrderDetail.customer_phone ? `（${selectedOrderDetail.customer_phone}）` : ''}
-                  </span>
+              {(selectedOrderDetail.customer_name || selectedOrderDetail.customer_address) && (
+                <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200 text-neutral-900 space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-neutral-600">下单顾客：</span>
+                    <span className="font-bold text-neutral-800 text-right">
+                      {selectedOrderDetail.customer_name || '-'}
+                      {selectedOrderDetail.customer_phone ? `（${selectedOrderDetail.customer_phone}）` : ''}
+                    </span>
+                  </div>
+                  {(selectedOrderDetail.customer_address || selectedOrderDetail.delivery_address) && (
+                    <div className="flex items-start justify-between gap-3 pt-1 border-t border-sky-100">
+                      <span className="font-semibold text-neutral-600 shrink-0">送达地址：</span>
+                      <span className="font-bold text-neutral-800 text-right">
+                        {selectedOrderDetail.customer_address || selectedOrderDetail.delivery_address}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 

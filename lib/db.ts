@@ -455,6 +455,7 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS instant_rebate DOUBLE PRECISION NOT NULL DEFAULT 0;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT DEFAULT '';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1716,6 +1717,9 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
   const customerPhone = orderUser?.phone || '';
   const finalDeliveryAddress =
     orderType === '外卖' ? deliveryAddress || orderUser?.delivery_address || '' : deliveryAddress;
+  // 顾客地址上单（接单员必见）：外卖单 = 本次实际配送地址；堂食单 = 会员档案地址
+  // （无餐桌纯外卖店顾客常按默认堂食下单，靠这行兜底让接单员仍能看到送达地址）
+  const customerAddress = orderType === '外卖' ? finalDeliveryAddress : orderUser?.delivery_address || '';
   const finalDeliveryContact = deliveryContact || customerName;
   const finalDeliveryPhone = deliveryPhone || customerPhone;
 
@@ -1795,9 +1799,10 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     `INSERT INTO orders (
       id, tenant_id, table_no, order_type, delivery_address, delivery_contact, delivery_phone,
       payment_timing, payment_status, total_amount, points_used, points_discount,
-      points_earned, final_amount, instant_rebate, status, notes, user_id, customer_name, customer_phone, created_at, updated_at
+      points_earned, final_amount, instant_rebate, status, notes, user_id,
+      customer_name, customer_phone, customer_address, created_at, updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19, $20, $21
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19, $20, $21, $22
     )`,
     [
       orderId,
@@ -1819,6 +1824,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
       userId || null,
       customerName,
       customerPhone,
+      customerAddress,
       nowIso,
       nowIso,
     ]
@@ -1842,6 +1848,7 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     delivery_phone: finalDeliveryPhone,
     customer_name: customerName,
     customer_phone: customerPhone,
+    customer_address: customerAddress,
     payment_timing: paymentTiming,
     payment_status: paymentStatus,
     total_amount: total,

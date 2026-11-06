@@ -53,6 +53,7 @@ export interface Order {
   instant_rebate?: number; // 积分即时立减金额（静态收款码模式：积分权益下单时以现金立减兑现，该单不再另送积分）
   customer_name?: string; // 下单顾客姓名（服务端按 userId 从会员资料带入，接单员在订单卡/详情可见）
   customer_phone?: string; // 下单顾客手机号
+  customer_address?: string; // 下单顾客地址（外卖=本次配送地址；堂食=会员档案地址兜底，接单员送餐依据）
   final_amount: number;
   status: '待处理' | '制作中' | '已完成' | '已取消';
   handler_name?: string; // 处理该订单的接单员姓名（staff 处理留痕）
