@@ -453,6 +453,8 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_phone TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS handler_id INTEGER;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS instant_rebate DOUBLE PRECISION NOT NULL DEFAULT 0;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT DEFAULT '';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1704,12 +1706,22 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     });
   }
 
+  // 提交者信息（接单员在订单卡/详情可见）：按 userId 从会员资料带入姓名与电话；
+  // 外卖单若请求未带地址但会员资料有历史地址 → 自动补全（修复"登记后首单外卖地址为空"）
+  const orderUser = userId ? await getUser(userId, tenantId) : null;
+  const customerName = orderUser?.name || '';
+  const customerPhone = orderUser?.phone || '';
+  const finalDeliveryAddress =
+    orderType === '外卖' ? deliveryAddress || orderUser?.delivery_address || '' : deliveryAddress;
+  const finalDeliveryContact = deliveryContact || customerName;
+  const finalDeliveryPhone = deliveryPhone || customerPhone;
+
   // Handle Points deduction within tenant
   let actualPointsUsed = 0;
   let pointsDiscount = 0;
 
   if (userId && pointsUsed > 0) {
-    const user = await getUser(userId, tenantId);
+    const user = orderUser;
     if (user && user.is_verified === 1 && user.points > 0) {
       actualPointsUsed = Math.min(pointsUsed, user.points, total);
       pointsDiscount = actualPointsUsed;
@@ -1757,11 +1769,11 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     }
   }
 
-  if (userId && orderType === '外卖' && deliveryAddress) {
+  if (userId && orderType === '外卖' && finalDeliveryAddress) {
     await updateUser(userId, {
-      delivery_address: deliveryAddress,
-      delivery_contact: deliveryContact,
-      delivery_phone: deliveryPhone,
+      delivery_address: finalDeliveryAddress,
+      delivery_contact: finalDeliveryContact,
+      delivery_phone: finalDeliveryPhone,
     }, tenantId);
   }
 
@@ -1780,18 +1792,18 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     `INSERT INTO orders (
       id, tenant_id, table_no, order_type, delivery_address, delivery_contact, delivery_phone,
       payment_timing, payment_status, total_amount, points_used, points_discount,
-      points_earned, final_amount, instant_rebate, status, notes, user_id, created_at, updated_at
+      points_earned, final_amount, instant_rebate, status, notes, user_id, customer_name, customer_phone, created_at, updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19, $20, $21
     )`,
     [
       orderId,
       tenantId,
       orderType === '堂食' ? (tableNo?.trim() || '自取/未指定桌位') : '外卖送餐',
       orderType,
-      deliveryAddress,
-      deliveryContact,
-      deliveryPhone,
+      finalDeliveryAddress,
+      finalDeliveryContact,
+      finalDeliveryPhone,
       paymentTiming,
       paymentStatus,
       total,
@@ -1802,6 +1814,8 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
       instantRebate,
       notes || '',
       userId || null,
+      customerName,
+      customerPhone,
       nowIso,
       nowIso,
     ]
@@ -1820,9 +1834,11 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     tenant_id: tenantId,
     table_no: orderType === '堂食' ? tableNo : '外卖送餐',
     order_type: orderType,
-    delivery_address: deliveryAddress,
-    delivery_contact: deliveryContact,
-    delivery_phone: deliveryPhone,
+    delivery_address: finalDeliveryAddress,
+    delivery_contact: finalDeliveryContact,
+    delivery_phone: finalDeliveryPhone,
+    customer_name: customerName,
+    customer_phone: customerPhone,
     payment_timing: paymentTiming,
     payment_status: paymentStatus,
     total_amount: total,

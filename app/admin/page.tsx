@@ -765,6 +765,8 @@ export default function AdminPage() {
         (o.table_no && o.table_no.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         (o.delivery_contact && o.delivery_contact.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         (o.delivery_phone && o.delivery_phone.includes(orderSearchQuery)) ||
+        (o.customer_name && o.customer_name.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
+        (o.customer_phone && o.customer_phone.includes(orderSearchQuery)) ||
         (o.notes && o.notes.toLowerCase().includes(orderSearchQuery.toLowerCase())) ||
         o.items?.some((i) => i.dish_name.toLowerCase().includes(orderSearchQuery.toLowerCase()));
       return matchStatus && matchSearch;
@@ -1510,8 +1512,16 @@ export default function AdminPage() {
                             <span>送达：{order.delivery_address || '-'}</span>
                           </div>
                           <div className="text-neutral-500">
-                            联系人：{order.delivery_contact} ({order.delivery_phone})
+                            联系人：{order.delivery_contact || order.customer_name || '-'} ({order.delivery_phone || order.customer_phone || '-'})
                           </div>
+                        </div>
+                      )}
+
+                      {/* 顾客信息（堂食单也显示提交者，接单员可联系） */}
+                      {!isDelivery && order.customer_name && (
+                        <div className="px-3.5 py-2 bg-sky-50/50 border-b border-neutral-100 text-[11px] text-neutral-700">
+                          <span className="font-bold">顾客：</span>{order.customer_name}
+                          {order.customer_phone ? `（${order.customer_phone}）` : ''}
                         </div>
                       )}
 
@@ -1955,6 +1965,16 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+
+              {selectedOrderDetail.customer_name && (
+                <div className="p-2.5 bg-sky-50/80 rounded-xl border border-sky-200 text-neutral-900 flex items-center justify-between text-xs">
+                  <span className="font-semibold text-neutral-600">下单顾客：</span>
+                  <span className="font-bold text-neutral-800">
+                    {selectedOrderDetail.customer_name}
+                    {selectedOrderDetail.customer_phone ? `（${selectedOrderDetail.customer_phone}）` : ''}
+                  </span>
+                </div>
+              )}
 
               {selectedOrderDetail.handler_name && (
                 <div className="p-2.5 bg-indigo-50/80 rounded-xl border border-indigo-200 text-indigo-900 flex items-center justify-between text-xs">
