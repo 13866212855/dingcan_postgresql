@@ -21,10 +21,14 @@ export function getPool(): Pool {
       ssl: { rejectUnauthorized: false },
       max: 10,
       idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 8000,
+      statement_timeout: 10000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
 
     poolInstance.on('error', (err) => {
-      console.error('Unexpected idle PostgreSQL client error:', err);
+      console.error('Unexpected idle PostgreSQL client error:', err?.message || err);
     });
   }
   return poolInstance;
@@ -320,6 +324,19 @@ export async function ensureDatabase(): Promise<Pool> {
 
   initPromise = (async () => {
     try {
+      // 0. Fast-path check: if schema already initialized, skip heavy migration/seed loops
+      try {
+        const initCheck = await pool.query(
+          "SELECT 1 FROM settings WHERE key = 'db_initialized_v2' LIMIT 1"
+        );
+        if (initCheck.rows.length > 0) {
+          isInitDone = true;
+          return;
+        }
+      } catch {
+        // settings table might not exist yet, continue to create tables
+      }
+
       // 1. Base table creation
       await pool.query(`
         CREATE TABLE IF NOT EXISTS tenants (
@@ -647,6 +664,17 @@ export async function ensureDatabase(): Promise<Pool> {
             [tenant.id, s.key, s.value]
           );
         }
+      }
+
+      // 7. Mark database initialization complete so next boots are instant
+      try {
+        await pool.query(
+          `INSERT INTO settings (tenant_id, key, value)
+           VALUES ('default', 'db_initialized_v2', '1')
+           ON CONFLICT (tenant_id, key) DO UPDATE SET value = '1'`
+        );
+      } catch (markErr: any) {
+        console.warn('[ensureDatabase] Note: db_initialized_v2 record notice:', markErr?.message);
       }
 
       isInitDone = true;

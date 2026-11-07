@@ -15,6 +15,10 @@ import {
   ExternalLink,
   Eye,
   Info,
+  Share2,
+  Copy,
+  Check,
+  MessageSquare,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -63,6 +67,7 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
   const [logoLoadError, setLogoLoadError] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -510,7 +515,113 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
               </div>
             </div>
 
-            {/* 2. 当前图标详情 */}
+            {/* 2. 微信聊天分享图文卡片效果预览 */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-neutral-700 flex items-center space-x-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>微信聊天分享图文卡片效果预览：</span>
+                </span>
+                <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md font-medium">
+                  无需发长英文链接
+                </span>
+              </div>
+
+              {/* 微信对话框卡片模拟器 */}
+              <div className="p-3.5 bg-neutral-100 rounded-2xl border border-neutral-200 space-y-2.5">
+                <div className="text-[10px] text-neutral-400 text-center font-mono">
+                  微信对话框发送效果
+                </div>
+
+                {/* 微信原生卡片样式 (白色圆角气泡 + 左文右图) */}
+                <div className="bg-white rounded-xl p-3 border border-neutral-200/90 shadow-sm max-w-[280px] mx-auto hover:border-emerald-400 transition-colors">
+                  <div className="flex items-start justify-between gap-2.5 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-bold text-neutral-900 leading-snug line-clamp-1">
+                        {restaurantName || '康乐美'}订餐系统
+                      </h4>
+                      <p className="text-[10px] text-neutral-500 mt-1 leading-tight line-clamp-2">
+                        {restaurantSlogan || '精选食材 · 匠心出品 · 扫码在线点餐'}。美味佳肴现点现做，支持在线选餐...
+                      </p>
+                    </div>
+
+                    <div className="w-12 h-12 rounded-lg bg-neutral-100 border border-neutral-200 relative overflow-hidden shrink-0 shadow-2xs">
+                      {restaurantLogo && !logoLoadError ? (
+                        <Image
+                          src={restaurantLogo}
+                          alt="卡片配图"
+                          fill
+                          className="object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-amber-500 text-white font-black text-sm">
+                          {(restaurantName || '店').slice(0, 1)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-neutral-100 flex items-center justify-between text-[9px] text-neutral-400">
+                    <span className="flex items-center space-x-1">
+                      <Share2 className="w-2.5 h-2.5 text-neutral-400" />
+                      <span>点餐服务网页链接</span>
+                    </span>
+                    <span className="text-emerald-600 font-medium">点击即可进入</span>
+                  </div>
+                </div>
+
+                {/* 快捷复制与操作说明 */}
+                <div className="pt-1 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dingcan-postgresql.onrender.com';
+                      const link = `${origin}/?tenant=${encodeURIComponent(tenantId)}`;
+                      if (navigator.clipboard) {
+                        navigator.clipboard.writeText(link).then(() => {
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2500);
+                        });
+                      }
+                    }}
+                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center justify-center space-x-1.5 transition-colors shadow-xs cursor-pointer"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>已复制微信卡片专用链接！</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>复制本店微信分享链接</span>
+                      </>
+                    )}
+                  </button>
+
+                  <div className="bg-white/80 p-2.5 rounded-xl border border-neutral-200 text-[10px] text-neutral-600 space-y-1">
+                    <p className="font-bold text-neutral-800">
+                      💡 如何在微信中永久生成上面这张图文卡片？
+                    </p>
+                    <p>
+                      <strong>第1步：</strong>点击上方按钮复制链接，发在微信中（发给自己的文件传输助手即可）；
+                    </p>
+                    <p>
+                      <strong>第2步：</strong>在微信中点击链接打开一次，点右上角菜单<strong>「···」</strong>；
+                    </p>
+                    <p>
+                      <strong>第3步：</strong>点击<strong>「发送给朋友」</strong>发给自己或顾客微信群。
+                    </p>
+                    <p className="text-emerald-700 font-medium pt-0.5">
+                      ✓ 发送后微信就会自动打包成精美图文卡片！以后长按该卡片直接【转发】或【设为群公告】，完全不需要再发英文字符串。
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. 当前图标详情 */}
             <div className="p-4 bg-amber-50/70 rounded-2xl border border-amber-200/60 space-y-2.5">
               <div className="flex items-center space-x-2 text-xs font-bold text-amber-900">
                 <Info className="w-3.5 h-3.5 text-amber-600" />
