@@ -34,6 +34,9 @@ import {
   ChevronDown,
   ChevronUp,
   Zap,
+  Bell,
+  Volume2,
+  Smartphone,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
 
@@ -80,6 +83,13 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [printerTicketFooter, setPrinterTicketFooter] = useState('');
   const [testPrintLoading, setTestPrintLoading] = useState(false);
   const [testPrintResult, setTestPrintResult] = useState<{ success?: boolean; text?: string } | null>(null);
+
+  // 微信新订单强提醒（PushPlus 推送加 · 0元免费微信消息直推）
+  const [pushplusEnabled, setPushplusEnabled] = useState(false);
+  const [pushplusToken, setPushplusToken] = useState('');
+  const [pushplusTopic, setPushplusTopic] = useState('');
+  const [testPushLoading, setTestPushLoading] = useState(false);
+  const [testPushResult, setTestPushResult] = useState<{ success?: boolean; text?: string } | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -152,6 +162,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           if (data.data.smtp_pass) setSmtpPass(data.data.smtp_pass);
           if (data.data.notify_email_to) setNotifyEmailTo(data.data.notify_email_to);
           if (data.data.smtp_timeout) setSmtpTimeout(Number(data.data.smtp_timeout) || 15);
+          // 微信新订单强提醒 (PushPlus) 配置加载
+          setPushplusEnabled(data.data.pushplus_enabled === 1);
+          setPushplusToken(data.data.pushplus_token || '');
+          setPushplusTopic(data.data.pushplus_topic || '');
         }
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -375,6 +389,45 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
     }
   };
 
+  const handleTestPushPlus = async () => {
+    if (!pushplusToken.trim()) {
+      setTestPushResult({ success: false, text: '❌ 请先在下方输入您的 PushPlus Token' });
+      return;
+    }
+    setTestPushLoading(true);
+    setTestPushResult(null);
+    try {
+      const res = await fetch('/api/settings/test-pushplus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: pushplusToken.trim(),
+          topic: pushplusTopic.trim(),
+          tenantId,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestPushResult({
+          success: true,
+          text: `✔ ${data.message || '测试消息已成功发送至您的微信，请留意手机是否有微信提示音！'}`,
+        });
+      } else {
+        setTestPushResult({
+          success: false,
+          text: `❌ 发送失败：${data.error || '请检查 Token 是否有效'}`,
+        });
+      }
+    } catch (e: any) {
+      setTestPushResult({
+        success: false,
+        text: `❌ 发送异常：${e.message || '网络连接超时'}`,
+      });
+    } finally {
+      setTestPushLoading(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -418,6 +471,9 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           smtp_pass: smtpPass.trim(),
           notify_email_to: notifyEmailTo.trim(),
           smtp_timeout: Number(smtpTimeout) || 15,
+          pushplus_enabled: pushplusEnabled ? 1 : 0,
+          pushplus_token: pushplusToken.trim(),
+          pushplus_topic: pushplusTopic.trim(),
           tenantId,
         }),
       });
@@ -1179,6 +1235,157 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                 <p>② 费率以虎皮椒签约页为准（个人通道约 1%~2.5%）；资金最终进入您绑定的个人微信/支付宝账户。</p>
                 <p>③ 虎皮椒平台维护期间若下单失败，系统自动回退静态收款码模式，顾客仍可正常付款（由店员核对到账）。</p>
                 <p>④ 建议首次启用后，用 0.01 元真实支付走一遍全流程验证回调到账。</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 微信新订单强提醒（PushPlus 推送加 · 0元免费微信直推） */}
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200/80">
+                <Bell className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-sm font-bold text-neutral-900">新订单微信强提醒（后台 / 锁屏听声接单 · 0元免费）</h3>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+                    免开服务号 · 零成本
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  顾客下单即刻向接单员微信推送模版消息。接单员在看视频、聊微信或手机锁屏放口袋，微信都会清脆叮咚响铃并弹出带地址订单横幅！
+                </p>
+              </div>
+            </div>
+
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pushplusEnabled}
+                onChange={(e) => setPushplusEnabled(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+
+          {pushplusEnabled && (
+            <div className="pt-2 border-t border-neutral-100 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Token 输入框 */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                    <span>
+                      PushPlus 个人 Token <span className="text-rose-500">*</span>
+                    </span>
+                    <a
+                      href="https://www.pushplus.plus"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-emerald-600 hover:text-emerald-700 underline font-normal"
+                    >
+                      点击打开 PushPlus 官网扫码获取 Token ↗
+                    </a>
+                  </label>
+                  <input
+                    type="text"
+                    value={pushplusToken}
+                    onChange={(e) => setPushplusToken(e.target.value)}
+                    placeholder="例如：a1b2c3d4e5f6g7h8i9j0..."
+                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                  />
+                  <p className="text-[10px] text-neutral-400">
+                    接单员微信扫码即可一秒拿到，每天数千次免费推送额度，完全满足日常接单需求。
+                  </p>
+                </div>
+
+                {/* 群组编码（可选） */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                    <span>群组编码 Topic（可选，多人同时接单）</span>
+                    <span className="text-[10px] text-neutral-400 font-normal">留空即单人接收</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={pushplusTopic}
+                    onChange={(e) => setPushplusTopic(e.target.value)}
+                    placeholder="例如：canteen_order_team"
+                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                  />
+                  <p className="text-[10px] text-neutral-400">
+                    如需前台、后厨等多位接单员手机微信同时响铃，可在 PushPlus 创建群组并填入群组编码。
+                  </p>
+                </div>
+              </div>
+
+              {/* 测试按钮与测试结果反馈 */}
+              <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-neutral-50 p-3.5 rounded-xl border border-neutral-200">
+                <div className="flex items-center space-x-2 text-xs text-neutral-600">
+                  <Volume2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>配置完成后，可立即点击右侧按钮测试手机微信是否会发出清脆提示音与弹窗：</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={testPushLoading}
+                  onClick={handleTestPushPlus}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-60 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer shrink-0 flex items-center space-x-1.5"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>{testPushLoading ? '正在发送微信测试消息...' : '测试发送一条微信消息 (听声音)'}</span>
+                </button>
+              </div>
+
+              {testPushResult && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center space-x-2 ${
+                    testPushResult.success
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {testPushResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{testPushResult.text}</span>
+                </div>
+              )}
+
+              {/* 30 秒配置指南 */}
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 text-[11px] text-emerald-950 space-y-2 leading-relaxed">
+                <p className="font-bold text-xs text-emerald-900 flex items-center space-x-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>📖 30 秒免费获取 PushPlus Token 超简单步骤：</span>
+                </p>
+                <div className="space-y-1 text-neutral-700 pl-1">
+                  <p>
+                    <strong>第 1 步：</strong>用电脑或手机浏览器打开官网：
+                    <a
+                      href="https://www.pushplus.plus"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-700 font-bold underline ml-1"
+                    >
+                      www.pushplus.plus
+                    </a>；
+                  </p>
+                  <p>
+                    <strong>第 2 步：</strong>在右上角点击【微信扫码登录】，用接单员的个人微信扫一扫即可登录（无需注册密码，0费用）；
+                  </p>
+                  <p>
+                    <strong>第 3 步：</strong>登录后在首页或【一对一推送】页面，找到并复制您的<strong>【Token】</strong>，粘贴到上方输入框；
+                  </p>
+                  <p>
+                    <strong>第 4 步：</strong>点击【测试发送一条微信消息】，您的微信立刻就会收到测试通知！确认手机微信响起提示音后，点击本页底部【保存全部配置】即可！
+                  </p>
+                </div>
+                <p className="text-emerald-800 text-[10px] pt-1 border-t border-emerald-200/60">
+                  💡 <strong>贴心优势</strong>：哪怕接单员手机锁屏放在围裙口袋里、或者正在全屏刷短视频/玩游戏，有新订单时微信都会立即发出标准提示音并在顶部弹出带顾客姓名、电话和地址的订单横幅，点击直接秒进后台接单！
+                </p>
               </div>
             </div>
           )}

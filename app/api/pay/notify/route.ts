@@ -9,6 +9,7 @@ import {
 } from '@/lib/db';
 import { xunhuVerify } from '@/lib/xunhupay';
 import { sendOrderPaymentEmail } from '@/lib/email';
+import { sendOrderPushPlusNotification } from '@/lib/pushplus';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,6 +89,23 @@ export async function POST(req: NextRequest) {
         await Promise.race([emailPromise, new Promise((r) => setTimeout(r, 3500))]);
       } catch (mailErr) {
         console.error('[Pay Notify] Payment confirm email error:', mailErr);
+      }
+
+      // 微信新订单强提醒（PushPlus 0元微信直推）
+      try {
+        const pushPromise = (async () => {
+          const fullOrder = await getOrderById(updated.order_id, updated.tenant_id);
+          const settings = await getSettings(updated.tenant_id);
+          if (fullOrder) {
+            await sendOrderPushPlusNotification(fullOrder, {
+              restaurantName: settings?.restaurant_name,
+              tenantId: updated.tenant_id,
+            });
+          }
+        })();
+        await Promise.race([pushPromise, new Promise((r) => setTimeout(r, 3500))]);
+      } catch (pushErr) {
+        console.error('[Pay Notify] PushPlus notify error:', pushErr);
       }
     }
 

@@ -4,6 +4,7 @@ import { getTenantIdFromRequest } from '@/lib/tenant';
 import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { sendOrderPaymentEmail } from '@/lib/email';
 import { sendOrderToPrinter } from '@/lib/printer';
+import { sendOrderPushPlusNotification } from '@/lib/pushplus';
 
 export const dynamic = 'force-dynamic';
 
@@ -157,6 +158,26 @@ export async function POST(req: NextRequest) {
       ]);
     } catch (printErr) {
       console.error('[Order Auto-Print Error]', printErr);
+    }
+
+    // 微信新订单强提醒（PushPlus 0元微信直推）：接单员切后台/看视频/锁屏也能在微信听到提示音
+    try {
+      const pushPromise = (async () => {
+        const fullOrder = await getOrderById(order.id, tenantId);
+        const settings = await getSettings(tenantId);
+        if (fullOrder) {
+          await sendOrderPushPlusNotification(fullOrder, {
+            restaurantName: settings?.restaurant_name,
+            tenantId,
+          });
+        }
+      })();
+      await Promise.race([
+        pushPromise,
+        new Promise((resolve) => setTimeout(resolve, 3500)),
+      ]);
+    } catch (pushErr) {
+      console.error('[Order PushPlus Notice Error]', pushErr);
     }
 
     return NextResponse.json({

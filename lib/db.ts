@@ -1393,6 +1393,9 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let notify_email_to = process.env.NOTIFY_EMAIL_TO || '527194933@qq.com';
   let smtp_timeout = 15; // 默认 15 秒 (跨国云平台推荐)
   let amap_web_key = process.env.AMAP_WEB_KEY || ''; // 高德地图 Web 服务 API Key (可选免费额度)
+  let pushplus_enabled = 0; // 微信新订单强提醒: 1=开启, 0=关闭
+  let pushplus_token = ''; // PushPlus 个人免费 Token
+  let pushplus_topic = ''; // PushPlus 群组编码 Topic
 
   for (const row of res.rows) {
     if (row.key === 'payment_qr_code') payment_qr_code = row.value || '';
@@ -1449,6 +1452,9 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'notify_email_to' && row.value?.trim()) notify_email_to = row.value.trim();
     if (row.key === 'smtp_timeout') smtp_timeout = Math.max(5, Math.min(60, Number(row.value) || 15));
     if (row.key === 'amap_web_key') amap_web_key = (row.value || '').trim();
+    if (row.key === 'pushplus_enabled') pushplus_enabled = row.value === '1' ? 1 : 0;
+    if (row.key === 'pushplus_token') pushplus_token = (row.value || '').trim();
+    if (row.key === 'pushplus_topic') pushplus_topic = (row.value || '').trim();
   }
 
   return {
@@ -1497,6 +1503,9 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     notify_email_to,
     smtp_timeout,
     amap_web_key,
+    pushplus_enabled,
+    pushplus_token,
+    pushplus_topic,
   };
 }
 

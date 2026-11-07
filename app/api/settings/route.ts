@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
       notify_email_to,
       smtp_timeout,
       amap_web_key,
+      pushplus_enabled,
+      pushplus_token,
+      pushplus_topic,
     } = body;
 
     if (enable_dine_in !== undefined) {
@@ -240,6 +243,15 @@ export async function POST(req: NextRequest) {
     }
     if (amap_web_key !== undefined) {
       await updateSetting('amap_web_key', String(amap_web_key).trim(), tenantId);
+    }
+    if (pushplus_enabled !== undefined) {
+      await updateSetting('pushplus_enabled', pushplus_enabled ? '1' : '0', tenantId);
+    }
+    if (pushplus_token !== undefined) {
+      await updateSetting('pushplus_token', String(pushplus_token).trim(), tenantId);
+    }
+    if (pushplus_topic !== undefined) {
+      await updateSetting('pushplus_topic', String(pushplus_topic).trim(), tenantId);
     }
 
     const updated = await getSettings(tenantId);
