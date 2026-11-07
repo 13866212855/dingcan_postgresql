@@ -1467,6 +1467,11 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'pushplus_topic') pushplus_topic = (row.value || '').trim();
   }
 
+  // 租户 zhou 的收款码容灾保障：如果为空或配置成了海外易受阻断的第三方图床，无缝切到本站同域静态直链
+  if (tenantId === 'zhou' && (!payment_qr_code || payment_qr_code.includes('cloudinary.com'))) {
+    payment_qr_code = '/uploads/restaurant_qrcodes/1793870233471_7840c1429fb7526e683bb219d6c2b687_b7e738.webp';
+  }
+
   return {
     tenant_id: tenantId,
     payment_qr_code,

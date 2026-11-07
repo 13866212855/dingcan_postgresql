@@ -57,6 +57,10 @@ export default function PaymentModal({
 
   const isDynamic = !!dynamicPay;
 
+  const fallbackUrl = tenantId === 'zhou' ? '/uploads/restaurant_qrcodes/1793870233471_7840c1429fb7526e683bb219d6c2b687_b7e738.webp' : '';
+  const [useFallback, setUseFallback] = React.useState(false);
+  const activeQrSrc = useFallback ? fallbackUrl : (qrCodeUrl?.trim() || fallbackUrl);
+
   // 静态收款码模式：确认按钮门禁——
   // ① 基础延迟：每次打开随机 20~28 秒（预留真实支付时间；随机化让"干等过期"无法掐点）
   // ② 移动端硬性门禁：必须检测到"页面切出→切回"往返（顾客真的离开本页去付款再回来）——
@@ -161,6 +165,7 @@ export default function PaymentModal({
       const resetTimer = setTimeout(() => {
         setPaidDetected(false);
         setImgError(false);
+        setUseFallback(false);
       }, 0);
       return () => clearTimeout(resetTimer);
     }
@@ -342,16 +347,22 @@ export default function PaymentModal({
               onPointerCancel={() => { pressStartRef.current = null; }}
               onContextMenu={() => setLongPressed(true)}
             >
-              {qrCodeUrl && !imgError ? (
+              {activeQrSrc && !imgError ? (
                 <div className="relative w-56 h-56 rounded-xl overflow-hidden bg-white shadow-inner border border-neutral-200">
                   <Image
-                    src={qrCodeUrl}
+                    src={activeQrSrc}
                     alt="饭店收款码"
                     fill
                     unoptimized
                     className="object-contain p-2"
                     referrerPolicy="no-referrer"
-                    onError={() => setImgError(true)}
+                    onError={() => {
+                      if (!useFallback && fallbackUrl && activeQrSrc !== fallbackUrl) {
+                        setUseFallback(true);
+                      } else {
+                        setImgError(true);
+                      }
+                    }}
                   />
                 </div>
               ) : (
