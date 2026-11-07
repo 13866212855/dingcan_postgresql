@@ -99,8 +99,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 存储策略（大陆环境优化）：本地 public/uploads 优先（同域 /uploads 直链，展示层零外网依赖）；
-    // 本地写入失败时回退 Cloudinary。provider 标记实际存储位置。
+    // 存储策略（高可用双保险）：
+    // 对于收款码 (restaurant_qrcodes) 与门店标志 (restaurant_logos) 等核心持久化资产，
+    // 优先上传至 Cloudinary 永久云存储，确保在 Render/Serverless 容器休眠重启时绝对不丢失！
+    // 同时在本地写入副本；若 Cloudinary 异常则优雅降级为本地。
     let uploadResult: {
       url: string;
       secure_url: string;
@@ -109,28 +111,63 @@ export async function POST(req: NextRequest) {
       bytes: number;
     };
     let storageProvider = 'local';
-    try {
-      const rawExt = optimizationInfo?.format || (targetFilename.split('.').pop() || 'jpg');
-      const ext = (rawExt === 'jpeg' ? 'jpg' : rawExt).toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      const saved = saveImageToPublicUploads(uploadBuffer, targetFolder, targetFilename, ext);
-      uploadResult = {
-        url: saved.url,
-        secure_url: saved.url,
-        public_id: saved.publicId,
-        format: ext,
-        bytes: uploadBuffer.length,
-      };
-    } catch (localErr) {
-      console.warn('[Upload] Local storage failed, falling back to Cloudinary:', localErr);
-      const cloudRes = await uploadToCloudinary(uploadBuffer, targetFolder, targetFilename);
-      uploadResult = {
-        url: cloudRes.url,
-        secure_url: cloudRes.secure_url,
-        public_id: cloudRes.public_id,
-        format: cloudRes.format,
-        bytes: cloudRes.bytes,
-      };
-      storageProvider = 'cloudinary';
+
+    if (targetFolder === 'restaurant_qrcodes' || targetFolder === 'restaurant_logos') {
+      try {
+        const cloudRes = await uploadToCloudinary(uploadBuffer, targetFolder, targetFilename);
+        uploadResult = {
+          url: cloudRes.secure_url,
+          secure_url: cloudRes.secure_url,
+          public_id: cloudRes.public_id,
+          format: cloudRes.format,
+          bytes: cloudRes.bytes,
+        };
+        storageProvider = 'cloudinary';
+        // 同步保留本地副本
+        try {
+          const rawExt = optimizationInfo?.format || (targetFilename.split('.').pop() || 'jpg');
+          const ext = (rawExt === 'jpeg' ? 'jpg' : rawExt).toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+          saveImageToPublicUploads(uploadBuffer, targetFolder, targetFilename, ext);
+        } catch {
+          // ignore local save error
+        }
+      } catch (cloudErr) {
+        console.warn('[Upload] Cloudinary upload failed, falling back to local storage:', cloudErr);
+        const rawExt = optimizationInfo?.format || (targetFilename.split('.').pop() || 'jpg');
+        const ext = (rawExt === 'jpeg' ? 'jpg' : rawExt).toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const saved = saveImageToPublicUploads(uploadBuffer, targetFolder, targetFilename, ext);
+        uploadResult = {
+          url: saved.url,
+          secure_url: saved.url,
+          public_id: saved.publicId,
+          format: ext,
+          bytes: uploadBuffer.length,
+        };
+      }
+    } else {
+      try {
+        const rawExt = optimizationInfo?.format || (targetFilename.split('.').pop() || 'jpg');
+        const ext = (rawExt === 'jpeg' ? 'jpg' : rawExt).toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const saved = saveImageToPublicUploads(uploadBuffer, targetFolder, targetFilename, ext);
+        uploadResult = {
+          url: saved.url,
+          secure_url: saved.url,
+          public_id: saved.publicId,
+          format: ext,
+          bytes: uploadBuffer.length,
+        };
+      } catch (localErr) {
+        console.warn('[Upload] Local storage failed, falling back to Cloudinary:', localErr);
+        const cloudRes = await uploadToCloudinary(uploadBuffer, targetFolder, targetFilename);
+        uploadResult = {
+          url: cloudRes.url,
+          secure_url: cloudRes.secure_url,
+          public_id: cloudRes.public_id,
+          format: cloudRes.format,
+          bytes: cloudRes.bytes,
+        };
+        storageProvider = 'cloudinary';
+      }
     }
 
     // 如果客户端显式请求 AI 视觉智能分析（如上传菜品时自动识别并写简介）
