@@ -492,13 +492,9 @@ export default function OrderingClient({
     // 静态收款码（功能三）：点"去支付并下单"不建单——顾客付款后点"我已完成扫码支付"
     // 才创建订单（已支付），后台只收真实付款的单，不被放弃付款的空单淹没。
     // 前端此刻选定随机立减 staticRebate：弹窗展示金额与稍后落库金额严格一致。
-    const ratio = (settings?.points_ratio || 0) / 100;
+    // 静态收款码模式：保持应付金额与购物车/订单金额完全一致（不进行随机立减浮动）
     const netAmount = orderData.finalAmount ?? totalPrice;
-    const rebateCeiling = Math.round(netAmount * ratio * 100) / 100;
-    const rebate =
-      rebateCeiling >= 0.01
-        ? Math.round((0.01 + Math.random() * (rebateCeiling - 0.01)) * 100) / 100
-        : 0;
+    const rebate = 0;
     setStaticRebate(rebate);
     setPendingCheckoutData(orderData);
     setStaticPaySnapshot({
