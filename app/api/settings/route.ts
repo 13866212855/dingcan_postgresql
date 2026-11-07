@@ -65,6 +65,10 @@ export async function POST(req: NextRequest) {
       smtp_timeout,
       amap_web_key,
       pushplus_enabled,
+      wechat_push_channel,
+      wxpusher_app_token,
+      wxpusher_uid,
+      wxpusher_topic_id,
       pushplus_token,
       pushplus_topic,
     } = body;
@@ -246,6 +250,18 @@ export async function POST(req: NextRequest) {
     }
     if (pushplus_enabled !== undefined) {
       await updateSetting('pushplus_enabled', pushplus_enabled ? '1' : '0', tenantId);
+    }
+    if (wechat_push_channel !== undefined) {
+      await updateSetting('wechat_push_channel', wechat_push_channel === 'pushplus' ? 'pushplus' : 'wxpusher', tenantId);
+    }
+    if (wxpusher_app_token !== undefined) {
+      await updateSetting('wxpusher_app_token', String(wxpusher_app_token).trim(), tenantId);
+    }
+    if (wxpusher_uid !== undefined) {
+      await updateSetting('wxpusher_uid', String(wxpusher_uid).trim(), tenantId);
+    }
+    if (wxpusher_topic_id !== undefined) {
+      await updateSetting('wxpusher_topic_id', String(wxpusher_topic_id).trim(), tenantId);
     }
     if (pushplus_token !== undefined) {
       await updateSetting('pushplus_token', String(pushplus_token).trim(), tenantId);

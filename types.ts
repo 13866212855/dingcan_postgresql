@@ -157,10 +157,14 @@ export interface AppSettings {
   smtp_timeout?: number; // 网络连接超时（秒），默认 15 秒
   // 高德地图 Web 服务 API Key (可选，个人免费每日5000次，用于外卖精准逆地理自动定位)
   amap_web_key?: string;
-  // 微信新订单强提醒 (PushPlus 推送加 · 0元免费微信消息直推，看视频/锁屏也能听声弹窗接单)
+  // 微信新订单强提醒 (0元免费微信消息直推，看视频/锁屏也能听声弹窗接单)
   pushplus_enabled?: number; // 开启微信消息强提醒: 1=开启, 0=关闭 (默认0)
-  pushplus_token?: string; // PushPlus 个人免费 Token (微信扫码一秒获取)
-  pushplus_topic?: string; // PushPlus 群组编码/Topic (可选，多名店员/接单员同时接收声音提醒)
+  wechat_push_channel?: 'wxpusher' | 'pushplus'; // 推送通道: 'wxpusher'=WxPusher(永久免费免实名), 'pushplus'=PushPlus
+  wxpusher_app_token?: string; // WxPusher 应用 AppToken (以 AT_ 开头)
+  wxpusher_uid?: string; // WxPusher 用户个人 UID (以 UID_ 开头，一对一接收)
+  wxpusher_topic_id?: string; // WxPusher 主题 TopicId (可选，群发给多位店员)
+  pushplus_token?: string; // PushPlus 个人 Token (备用通道)
+  pushplus_topic?: string; // PushPlus 群组编码/Topic (可选)
 }
 
 export interface LLMConfig {

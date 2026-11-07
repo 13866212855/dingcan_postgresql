@@ -1394,6 +1394,10 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let smtp_timeout = 15; // 默认 15 秒 (跨国云平台推荐)
   let amap_web_key = process.env.AMAP_WEB_KEY || ''; // 高德地图 Web 服务 API Key (可选免费额度)
   let pushplus_enabled = 0; // 微信新订单强提醒: 1=开启, 0=关闭
+  let wechat_push_channel: 'wxpusher' | 'pushplus' = 'wxpusher';
+  let wxpusher_app_token = '';
+  let wxpusher_uid = '';
+  let wxpusher_topic_id = '';
   let pushplus_token = ''; // PushPlus 个人免费 Token
   let pushplus_topic = ''; // PushPlus 群组编码 Topic
 
@@ -1453,6 +1457,12 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'smtp_timeout') smtp_timeout = Math.max(5, Math.min(60, Number(row.value) || 15));
     if (row.key === 'amap_web_key') amap_web_key = (row.value || '').trim();
     if (row.key === 'pushplus_enabled') pushplus_enabled = row.value === '1' ? 1 : 0;
+    if (row.key === 'wechat_push_channel' && (row.value === 'wxpusher' || row.value === 'pushplus')) {
+      wechat_push_channel = row.value;
+    }
+    if (row.key === 'wxpusher_app_token') wxpusher_app_token = (row.value || '').trim();
+    if (row.key === 'wxpusher_uid') wxpusher_uid = (row.value || '').trim();
+    if (row.key === 'wxpusher_topic_id') wxpusher_topic_id = (row.value || '').trim();
     if (row.key === 'pushplus_token') pushplus_token = (row.value || '').trim();
     if (row.key === 'pushplus_topic') pushplus_topic = (row.value || '').trim();
   }
@@ -1504,6 +1514,10 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     smtp_timeout,
     amap_web_key,
     pushplus_enabled,
+    wechat_push_channel,
+    wxpusher_app_token,
+    wxpusher_uid,
+    wxpusher_topic_id,
     pushplus_token,
     pushplus_topic,
   };

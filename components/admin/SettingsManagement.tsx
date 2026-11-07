@@ -84,8 +84,12 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [testPrintLoading, setTestPrintLoading] = useState(false);
   const [testPrintResult, setTestPrintResult] = useState<{ success?: boolean; text?: string } | null>(null);
 
-  // 微信新订单强提醒（PushPlus 推送加 · 0元免费微信消息直推）
+  // 微信新订单强提醒（WxPusher 0元免实名费通道 + PushPlus 备用通道）
   const [pushplusEnabled, setPushplusEnabled] = useState(false);
+  const [wechatPushChannel, setWechatPushChannel] = useState<'wxpusher' | 'pushplus'>('wxpusher');
+  const [wxpusherAppToken, setWxpusherAppToken] = useState('');
+  const [wxpusherUid, setWxpusherUid] = useState('');
+  const [wxpusherTopicId, setWxpusherTopicId] = useState('');
   const [pushplusToken, setPushplusToken] = useState('');
   const [pushplusTopic, setPushplusTopic] = useState('');
   const [testPushLoading, setTestPushLoading] = useState(false);
@@ -162,8 +166,12 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           if (data.data.smtp_pass) setSmtpPass(data.data.smtp_pass);
           if (data.data.notify_email_to) setNotifyEmailTo(data.data.notify_email_to);
           if (data.data.smtp_timeout) setSmtpTimeout(Number(data.data.smtp_timeout) || 15);
-          // 微信新订单强提醒 (PushPlus) 配置加载
+          // 微信新订单强提醒 (WxPusher & PushPlus) 配置加载
           setPushplusEnabled(data.data.pushplus_enabled === 1);
+          setWechatPushChannel(data.data.wechat_push_channel === 'pushplus' ? 'pushplus' : 'wxpusher');
+          setWxpusherAppToken(data.data.wxpusher_app_token || '');
+          setWxpusherUid(data.data.wxpusher_uid || '');
+          setWxpusherTopicId(data.data.wxpusher_topic_id || '');
           setPushplusToken(data.data.pushplus_token || '');
           setPushplusTopic(data.data.pushplus_topic || '');
         }
@@ -390,12 +398,61 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   };
 
   const handleTestPushPlus = async () => {
-    if (!pushplusToken.trim()) {
-      setTestPushResult({ success: false, text: '❌ 请先在下方输入您的 PushPlus Token' });
-      return;
-    }
     setTestPushLoading(true);
     setTestPushResult(null);
+
+    if (wechatPushChannel === 'wxpusher') {
+      if (!wxpusherAppToken.trim()) {
+        setTestPushResult({ success: false, text: '❌ 请先输入 WxPusher 应用 AppToken (以 AT_ 开头)' });
+        setTestPushLoading(false);
+        return;
+      }
+      if (!wxpusherUid.trim() && !wxpusherTopicId.trim()) {
+        setTestPushResult({ success: false, text: '❌ 请至少输入接收人 UID (以 UID_ 开头) 或主题 TopicId' });
+        setTestPushLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/settings/test-wxpusher', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            appToken: wxpusherAppToken.trim(),
+            uid: wxpusherUid.trim(),
+            topicId: wxpusherTopicId.trim(),
+            tenantId,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setTestPushResult({
+            success: true,
+            text: `✔ ${data.message || '测试消息已成功发送至您的微信，请留意手机是否有微信提示音！'}`,
+          });
+        } else {
+          setTestPushResult({
+            success: false,
+            text: `❌ 发送失败：${data.error || '请检查 AppToken 或 UID 是否正确'}`,
+          });
+        }
+      } catch (e: any) {
+        setTestPushResult({
+          success: false,
+          text: `❌ 发送异常：${e.message || '网络连接超时'}`,
+        });
+      } finally {
+        setTestPushLoading(false);
+      }
+      return;
+    }
+
+    // PushPlus 测试通道
+    if (!pushplusToken.trim()) {
+      setTestPushResult({ success: false, text: '❌ 请先输入您的 PushPlus Token' });
+      setTestPushLoading(false);
+      return;
+    }
     try {
       const res = await fetch('/api/settings/test-pushplus', {
         method: 'POST',
@@ -472,6 +529,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           notify_email_to: notifyEmailTo.trim(),
           smtp_timeout: Number(smtpTimeout) || 15,
           pushplus_enabled: pushplusEnabled ? 1 : 0,
+          wechat_push_channel: wechatPushChannel,
+          wxpusher_app_token: wxpusherAppToken.trim(),
+          wxpusher_uid: wxpusherUid.trim(),
+          wxpusher_topic_id: wxpusherTopicId.trim(),
           pushplus_token: pushplusToken.trim(),
           pushplus_topic: pushplusTopic.trim(),
           tenantId,
@@ -1273,58 +1334,211 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
 
           {pushplusEnabled && (
             <div className="pt-2 border-t border-neutral-100 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Token 输入框 */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
-                    <span>
-                      PushPlus 个人 Token <span className="text-rose-500">*</span>
-                    </span>
-                    <a
-                      href="https://www.pushplus.plus"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[11px] text-emerald-600 hover:text-emerald-700 underline font-normal"
-                    >
-                      点击打开 PushPlus 官网扫码获取 Token ↗
-                    </a>
-                  </label>
-                  <input
-                    type="text"
-                    value={pushplusToken}
-                    onChange={(e) => setPushplusToken(e.target.value)}
-                    placeholder="例如：a1b2c3d4e5f6g7h8i9j0..."
-                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
-                  />
-                  <p className="text-[10px] text-neutral-400">
-                    接单员微信扫码即可一秒拿到，每天数千次免费推送额度，完全满足日常接单需求。
-                  </p>
+              {/* 通道切换器 */}
+              <div className="bg-neutral-50 p-3 rounded-xl border border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="text-xs font-bold text-neutral-800 flex items-center space-x-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>选择推送通道：</span>
                 </div>
-
-                {/* 群组编码（可选） */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
-                    <span>群组编码 Topic（可选，多人同时接单）</span>
-                    <span className="text-[10px] text-neutral-400 font-normal">留空即单人接收</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={pushplusTopic}
-                    onChange={(e) => setPushplusTopic(e.target.value)}
-                    placeholder="例如：canteen_order_team"
-                    className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
-                  />
-                  <p className="text-[10px] text-neutral-400">
-                    如需前台、后厨等多位接单员手机微信同时响铃，可在 PushPlus 创建群组并填入群组编码。
-                  </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWechatPushChannel('wxpusher');
+                      setTestPushResult(null);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center space-x-1.5 ${
+                      wechatPushChannel === 'wxpusher'
+                        ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600 ring-offset-1'
+                        : 'bg-white text-neutral-700 hover:text-neutral-900 border border-neutral-300'
+                    }`}
+                  >
+                    <span>【强烈推荐】WxPusher (永久 0 元 · 免实名费)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWechatPushChannel('pushplus');
+                      setTestPushResult(null);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center space-x-1.5 ${
+                      wechatPushChannel === 'pushplus'
+                        ? 'bg-neutral-800 text-white shadow-xs ring-2 ring-neutral-800 ring-offset-1'
+                        : 'bg-white text-neutral-500 hover:text-neutral-700 border border-neutral-300'
+                    }`}
+                  >
+                    <span>PushPlus (备用 · 官方需3.9元认证)</span>
+                  </button>
                 </div>
               </div>
+
+              {/* WxPusher 免费通道专属表单 */}
+              {wechatPushChannel === 'wxpusher' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* WxPusher AppToken */}
+                    <div className="space-y-1.5 md:col-span-1">
+                      <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                        <span>
+                          应用 AppToken <span className="text-rose-500">*</span>
+                        </span>
+                        <a
+                          href="https://wxpusher.zjiecode.com"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-emerald-600 hover:text-emerald-700 underline font-normal"
+                        >
+                          打开官网扫码获取 ↗
+                        </a>
+                      </label>
+                      <input
+                        type="text"
+                        value={wxpusherAppToken}
+                        onChange={(e) => setWxpusherAppToken(e.target.value)}
+                        placeholder="例如：AT_a1b2c3d4..."
+                        className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                      <p className="text-[10px] text-neutral-400">
+                        在 WxPusher 创建应用后生成（以 AT_ 开头），完全免费。
+                      </p>
+                    </div>
+
+                    {/* 接单员个人 UID */}
+                    <div className="space-y-1.5 md:col-span-1">
+                      <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                        <span>
+                          接单员个人 UID <span className="text-rose-500">*</span>
+                        </span>
+                        <span className="text-[10px] text-neutral-400 font-normal">扫码关注后生成</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={wxpusherUid}
+                        onChange={(e) => setWxpusherUid(e.target.value)}
+                        placeholder="例如：UID_x1y2z3..."
+                        className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                      <p className="text-[10px] text-neutral-400">
+                        接单员微信扫应用二维码关注后，在后台「用户列表」复制（以 UID_ 开头）。
+                      </p>
+                    </div>
+
+                    {/* 主题 TopicId（可选多人） */}
+                    <div className="space-y-1.5 md:col-span-1">
+                      <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                        <span>主题 TopicId（可选，多人同时接单）</span>
+                        <span className="text-[10px] text-neutral-400 font-normal">留空即单人接收</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={wxpusherTopicId}
+                        onChange={(e) => setWxpusherTopicId(e.target.value)}
+                        placeholder="例如：12345"
+                        className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                      <p className="text-[10px] text-neutral-400">
+                        若需前台、后厨多人同时响铃，可在 WxPusher 创建主题并填入主题 ID。
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 1分钟 WxPusher 免费操作指南 */}
+                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 text-[11px] text-emerald-950 space-y-2 leading-relaxed">
+                    <p className="font-bold text-xs text-emerald-900 flex items-center space-x-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>📖 1 分钟免费获取 WxPusher 配置步骤（永久 0 元 · 无需交 3.9 元实名费）：</span>
+                    </p>
+                    <div className="space-y-1.5 text-neutral-700 pl-1">
+                      <p>
+                        <strong>第 1 步：</strong>电脑或手机浏览器打开官网：
+                        <a
+                          href="https://wxpusher.zjiecode.com"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-700 font-bold underline ml-1"
+                        >
+                          https://wxpusher.zjiecode.com
+                        </a>
+                        ，点击右上角【管理后台】，用接单员微信扫码即可一键登录（无需注册密码，0费用）；
+                      </p>
+                      <p>
+                        <strong>第 2 步：</strong>在左侧菜单点击【应用管理】👉【创建应用】，名称填“康乐美接单”，创建完成后复制显示的<strong>【appToken】</strong>（以 AT_ 开头），粘贴到上方输入框；
+                      </p>
+                      <p>
+                        <strong>第 3 步：</strong>在刚创建的应用详情中，点击【关注应用二维码】，用接单员微信扫一扫关注公众号；然后在左侧菜单点击【用户管理】👉【用户列表】，找到接单员昵称旁边的<strong>【UID】</strong>（以 UID_ 开头），复制并粘贴到上方输入框；
+                      </p>
+                      <p>
+                        <strong>第 4 步：</strong>点击下方【测试发送一条微信消息 (听声音)】，您的微信立刻会发出清脆提示音并弹出订单横幅！测试成功后点击页面底部【保存全部配置】即可！
+                      </p>
+                    </div>
+                    <p className="text-emerald-800 text-[10px] pt-1.5 border-t border-emerald-200">
+                      💡 <strong>完全免费优势</strong>：WxPusher 平台提供永久免费微信推送服务，不需要缴纳任何实名认证费或服务号年费！手机锁屏黑屏、全屏看短视频或打游戏，顾客下单都能第一时间发出微信声音提醒。
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PushPlus 备用通道表单 */}
+              {wechatPushChannel === 'pushplus' && (
+                <div className="space-y-4">
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start space-x-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1 leading-relaxed">
+                      <p className="font-bold">⚠️ PushPlus 官方平台已实行强制实名认证（收取 3.9 元认证费）</p>
+                      <p>
+                        若未完成 3.9 元认证，点击测试会提示“账户未进行实名认证”。如果您不想付费，<strong>请点击上方【WxPusher】绿色按钮</strong>，WxPusher 完全免费且免认证费。
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                        <span>
+                          PushPlus 个人 Token <span className="text-rose-500">*</span>
+                        </span>
+                        <a
+                          href="https://www.pushplus.plus"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-emerald-600 hover:text-emerald-700 underline font-normal"
+                        >
+                          打开 PushPlus 官网 ↗
+                        </a>
+                      </label>
+                      <input
+                        type="text"
+                        value={pushplusToken}
+                        onChange={(e) => setPushplusToken(e.target.value)}
+                        placeholder="例如：a1b2c3d4e5f6g7h8i9j0..."
+                        className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-neutral-700 flex items-center justify-between">
+                        <span>群组编码 Topic（可选）</span>
+                        <span className="text-[10px] text-neutral-400 font-normal">留空即单人接收</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={pushplusTopic}
+                        onChange={(e) => setPushplusTopic(e.target.value)}
+                        placeholder="例如：canteen_order_team"
+                        className="w-full px-3.5 py-2.5 text-xs font-mono bg-neutral-50 border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 测试按钮与测试结果反馈 */}
               <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-neutral-50 p-3.5 rounded-xl border border-neutral-200">
                 <div className="flex items-center space-x-2 text-xs text-neutral-600">
                   <Volume2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>配置完成后，可立即点击右侧按钮测试手机微信是否会发出清脆提示音与弹窗：</span>
+                  <span>
+                    填好参数后，可点击右侧按钮测试接单员手机微信是否发出声音与弹窗：
+                  </span>
                 </div>
 
                 <button
@@ -1354,39 +1568,6 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
                   <span>{testPushResult.text}</span>
                 </div>
               )}
-
-              {/* 30 秒配置指南 */}
-              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 text-[11px] text-emerald-950 space-y-2 leading-relaxed">
-                <p className="font-bold text-xs text-emerald-900 flex items-center space-x-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>📖 30 秒免费获取 PushPlus Token 超简单步骤：</span>
-                </p>
-                <div className="space-y-1 text-neutral-700 pl-1">
-                  <p>
-                    <strong>第 1 步：</strong>用电脑或手机浏览器打开官网：
-                    <a
-                      href="https://www.pushplus.plus"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-emerald-700 font-bold underline ml-1"
-                    >
-                      www.pushplus.plus
-                    </a>；
-                  </p>
-                  <p>
-                    <strong>第 2 步：</strong>在右上角点击【微信扫码登录】，用接单员的个人微信扫一扫即可登录（无需注册密码，0费用）；
-                  </p>
-                  <p>
-                    <strong>第 3 步：</strong>登录后在首页或【一对一推送】页面，找到并复制您的<strong>【Token】</strong>，粘贴到上方输入框；
-                  </p>
-                  <p>
-                    <strong>第 4 步：</strong>点击【测试发送一条微信消息】，您的微信立刻就会收到测试通知！确认手机微信响起提示音后，点击本页底部【保存全部配置】即可！
-                  </p>
-                </div>
-                <p className="text-emerald-800 text-[10px] pt-1 border-t border-emerald-200/60">
-                  💡 <strong>贴心优势</strong>：哪怕接单员手机锁屏放在围裙口袋里、或者正在全屏刷短视频/玩游戏，有新订单时微信都会立即发出标准提示音并在顶部弹出带顾客姓名、电话和地址的订单横幅，点击直接秒进后台接单！
-                </p>
-              </div>
             </div>
           )}
         </div>

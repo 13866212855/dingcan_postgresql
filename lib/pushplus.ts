@@ -8,8 +8,8 @@ interface PushPlusSendOptions {
 }
 
 /**
- * 微信新订单强提醒（PushPlus 0元免费微信消息直推）
- * 当顾客下单或支付成功后，主动调用 PushPlus 官方 API 向接单员个人微信发送服务通知
+ * 微信新订单强提醒（支持 WxPusher 永久免认证费通道 & PushPlus 通道）
+ * 当顾客下单或支付成功后，主动向接单员个人微信发送服务通知
  * 无论接单员在看视频、打游戏还是手机锁屏，微信都会弹出带声音的系统通知
  */
 export async function sendOrderPushPlusNotification(
@@ -19,12 +19,11 @@ export async function sendOrderPushPlusNotification(
   try {
     const settings = await getSettings(options.tenantId);
 
-    if (!settings.pushplus_token || settings.pushplus_enabled === 0) {
-      return { success: false, message: 'PushPlus 未开启或未配置 Token，已跳过' };
+    if (settings.pushplus_enabled === 0) {
+      return { success: false, message: '微信新订单强提醒未开启，已跳过' };
     }
 
-    const token = settings.pushplus_token.trim();
-    const topic = settings.pushplus_topic?.trim() || undefined;
+    const channel = settings.wechat_push_channel || 'wxpusher';
     const storeName = options.restaurantName?.trim() || settings.restaurant_name || '康乐美';
 
     // 格式化顾客信息
@@ -112,38 +111,167 @@ export async function sendOrderPushPlusNotification(
       👉 点击进入后台直接接单处理
     </a>
     <div style="font-size: 10px; color: #9ca3af; margin-top: 6px;">
-      微信锁屏与后台免漏单提醒服务 · Powered by PushPlus
+      微信锁屏与后台免漏单提醒服务
     </div>
   </div>
 </div>
 `.trim();
 
-    const pushPayload: any = {
-      token,
-      title,
-      content,
-      template: 'html',
-    };
+    // 优先方案 1：WxPusher 永久免实名费通道
+    if (channel === 'wxpusher' || (!settings.pushplus_token && settings.wxpusher_app_token)) {
+      if (!settings.wxpusher_app_token?.trim()) {
+        return { success: false, message: 'WxPusher 未配置 AppToken，已跳过' };
+      }
 
-    if (topic) {
-      pushPayload.topic = topic;
+      const uids: string[] = [];
+      if (settings.wxpusher_uid?.trim()) {
+        uids.push(settings.wxpusher_uid.trim());
+      }
+
+      const topicIds: number[] = [];
+      if (settings.wxpusher_topic_id?.trim()) {
+        const parsedTopic = parseInt(settings.wxpusher_topic_id.trim());
+        if (!isNaN(parsedTopic)) topicIds.push(parsedTopic);
+      }
+
+      if (uids.length === 0 && topicIds.length === 0) {
+        return { success: false, message: 'WxPusher 未配置 UID 或 TopicId，无法推送' };
+      }
+
+      const res = await fetch('https://wxpusher.zjiecode.com/api/send/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appToken: settings.wxpusher_app_token.trim(),
+          content,
+          summary: title,
+          contentType: 2, // 2: HTML
+          uids: uids.length > 0 ? uids : undefined,
+          topicIds: topicIds.length > 0 ? topicIds : undefined,
+          url: adminUrl,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.code === 1000) {
+        return { success: true, message: 'WxPusher 微信消息已成功推送' };
+      } else {
+        console.warn('[WxPusher Warning]', data);
+        return { success: false, error: data.msg || `WxPusher 响应码: ${data.code}` };
+      }
     }
 
-    const res = await fetch('https://www.pushplus.plus/send', {
+    // 方案 2：PushPlus 备用通道
+    if (settings.pushplus_token?.trim()) {
+      const pushPayload: any = {
+        token: settings.pushplus_token.trim(),
+        title,
+        content,
+        template: 'html',
+      };
+      if (settings.pushplus_topic?.trim()) {
+        pushPayload.topic = settings.pushplus_topic.trim();
+      }
+
+      const res = await fetch('https://www.pushplus.plus/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pushPayload),
+      });
+
+      const data = await res.json();
+      if (data.code === 200) {
+        return { success: true, message: data.msg || 'PushPlus 微信强提醒推送成功' };
+      } else {
+        return { success: false, error: data.msg || `PushPlus 错误码: ${data.code}` };
+      }
+    }
+
+    return { success: false, message: '未找到可用的微信推送配置' };
+  } catch (err: any) {
+    console.error('[Wechat Push Error]', err?.message || err);
+    return { success: false, error: err?.message || '网络连接超时' };
+  }
+}
+
+/**
+ * 测试发送一条 WxPusher 微信通知（0元免费免实名通道）
+ */
+export async function sendTestWxPusherNotification(
+  appToken: string,
+  uid?: string,
+  topicId?: string,
+  restaurantName?: string,
+  tenantId = 'default'
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  if (!appToken?.trim()) {
+    return { success: false, error: '请先填入有效的 WxPusher AppToken (以 AT_ 开头)' };
+  }
+
+  const uids: string[] = [];
+  if (uid?.trim()) {
+    uids.push(uid.trim());
+  }
+
+  const topicIds: number[] = [];
+  if (topicId?.trim()) {
+    const tid = parseInt(topicId.trim());
+    if (!isNaN(tid)) topicIds.push(tid);
+  }
+
+  if (uids.length === 0 && topicIds.length === 0) {
+    return { success: false, error: '请至少填入一个接收人 UID (以 UID_ 开头) 或主题 TopicId' };
+  }
+
+  const storeName = restaurantName?.trim() || '康乐美订餐系统';
+  const nowStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  const adminUrl = `https://dingcan-postgresql.onrender.com/admin?tenant=${encodeURIComponent(tenantId)}`;
+
+  const title = `🔔【${storeName}】微信接单声音提醒测试成功！`;
+  const content = `
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; padding: 14px; border: 1px solid #86efac; border-radius: 14px; background: #f0fdf4;">
+  <div style="border-bottom: 2px solid #22c55e; padding-bottom: 8px; margin-bottom: 12px;">
+    <h3 style="color: #15803d; margin: 0; font-size: 16px;">🎉【${storeName}】微信提醒配置成功！</h3>
+  </div>
+  <p style="font-size: 13px; color: #166534; line-height: 1.5;">
+    恭喜！当您在微信中看到这条消息时，说明 WxPusher 免费强提醒通道已顺利通畅。
+  </p>
+  <div style="background: #ffffff; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px; margin: 10px 0; font-size: 12px; color: #374151;">
+    <p style="margin: 3px 0;">• <strong>发送时间：</strong>${nowStr}</p>
+    <p style="margin: 3px 0;">• <strong>提示音验证：</strong>微信已发出提示音并弹出横幅</p>
+    <p style="margin: 3px 0;">• <strong>免实名收费：</strong>本通道永久 0 元免费，无需交任何 3.9 元认证费！</p>
+    <p style="margin: 3px 0;">• <strong>免漏单保障：</strong>以后即使在手机上看视频、刷其他应用或锁屏放口袋，新订单到来时都会像现在一样准时叮咚提醒！</p>
+  </div>
+  <div style="text-align: center; margin-top: 14px;">
+    <a href="${adminUrl}" style="display: block; background: #16a34a; color: #ffffff; padding: 10px 16px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 13px;">
+      👉 点击返回管理后台
+    </a>
+  </div>
+</div>
+`.trim();
+
+  try {
+    const res = await fetch('https://wxpusher.zjiecode.com/api/send/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pushPayload),
+      body: JSON.stringify({
+        appToken: appToken.trim(),
+        content,
+        summary: title,
+        contentType: 2, // HTML
+        uids: uids.length > 0 ? uids : undefined,
+        topicIds: topicIds.length > 0 ? topicIds : undefined,
+        url: adminUrl,
+      }),
     });
 
     const data = await res.json();
-    if (data.code === 200) {
-      return { success: true, message: data.msg || '微信强提醒推送成功' };
+    if (data.code === 1000) {
+      return { success: true, message: '测试消息已成功发送至您的微信，请留意手机微信提示音！' };
     } else {
-      console.warn('[PushPlus Warning]', data);
-      return { success: false, error: data.msg || `PushPlus 错误码: ${data.code}` };
+      return { success: false, error: data.msg || `WxPusher 错误码: ${data.code}` };
     }
   } catch (err: any) {
-    console.error('[PushPlus Error]', err?.message || err);
     return { success: false, error: err?.message || '网络连接超时' };
   }
 }
