@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       xhu_secret,
       xhu_gateway,
       pay_notify_base,
+      scan_return_confirm,
       llm_base_url,
       llm_api_key,
       llm_text_model,
@@ -119,6 +120,9 @@ export async function POST(req: NextRequest) {
     }
     if (pay_notify_base !== undefined) {
       await updateSetting('pay_notify_base', String(pay_notify_base).trim().replace(/\/+$/, ''), tenantId);
+    }
+    if (scan_return_confirm !== undefined) {
+      await updateSetting('scan_return_confirm', scan_return_confirm ? '1' : '0', tenantId);
     }
 
     if (payment_qr_code !== undefined) {

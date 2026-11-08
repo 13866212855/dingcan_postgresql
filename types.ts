@@ -128,6 +128,7 @@ export interface AppSettings {
   pay_notify_base?: string; // 公网回调基址（如 Render 域名或 cpolar 隧道域名，不带尾部斜杠）
   xhu_secret_configured?: number; // 密钥是否已配置: 1=已配置, 0=未配置
   pay_channel_ready?: number; // 动态支付通道就绪标志: 1=模式开启且三要素齐全, 0=未就绪（前端回退静态码）
+  scan_return_confirm?: number; // 静态码"返回即亮"开关: 1=顾客支付返回(离开≥10秒)后立即显示醒目确认大按钮, 0=经典门禁行为(默认)
   // 大模型 (AI大脑) 配置
   llm_base_url?: string; // 大模型服务端点，例如：https://apihub.agnes-ai.com/v1
   llm_api_key?: string; // 大模型授权访问密钥 (API Key)

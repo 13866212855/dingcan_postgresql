@@ -1362,6 +1362,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let xhu_gateway = 'https://api.xunhupay.com/payment/do.html';
   let pay_notify_base = '';
   let xhu_secret_configured = 0; // 密钥是否已配置（0/1 标志位，不回传密钥本身）
+  let scan_return_confirm = 0; // 静态码"返回即亮"开关（默认关闭=经典门禁行为）
 
   // 大模型 (AI大脑) 默认配置
   let llm_base_url = 'https://apihub.agnes-ai.com/v1';
@@ -1423,6 +1424,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'xhu_gateway' && row.value?.trim()) xhu_gateway = row.value.trim();
     if (row.key === 'pay_notify_base') pay_notify_base = row.value || '';
     if (row.key === 'xhu_secret' && row.value?.trim()) xhu_secret_configured = 1;
+    if (row.key === 'scan_return_confirm') scan_return_confirm = row.value === '1' ? 1 : 0;
 
     // LLM配置键值
     if (row.key === 'llm_base_url' && row.value?.trim()) llm_base_url = row.value.trim();
@@ -1491,6 +1493,7 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     xhu_gateway,
     pay_notify_base,
     xhu_secret_configured,
+    scan_return_confirm,
     // 通道就绪标志：动态模式 + 三要素齐全（appid/secret/回调基址），前端据此决定走动态支付还是静态码
     pay_channel_ready: pay_mode === 'xunhupay' && !!xhu_appid.trim() && xhu_secret_configured === 1 && !!pay_notify_base.trim() ? 1 : 0,
     llm_base_url,

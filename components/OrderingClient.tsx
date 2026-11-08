@@ -909,6 +909,7 @@ export default function OrderingClient({
         isConfirming={isSubmitting}
         dynamicPay={dynamicPayData}
         tenantId={tenantId}
+        scanReturnConfirm={settings?.scan_return_confirm === 1}
         onPaid={finishOrderSuccess}
         onRefreshPay={() => {
           if (createdPendingOrder) openDynamicPay(createdPendingOrder.id);
@@ -947,6 +948,7 @@ export default function OrderingClient({
         qrCodeUrl={settings?.payment_qr_code}
         payMode={settings?.pay_mode}
         payChannelReady={settings?.pay_channel_ready === 1}
+        scanReturnConfirm={settings?.scan_return_confirm === 1}
         tenantId={tenantId}
         onPaymentSuccess={() => {
           fetchUserAndSettings();

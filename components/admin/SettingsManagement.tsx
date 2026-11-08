@@ -69,6 +69,8 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [xhuGateway, setXhuGateway] = useState('https://api.xunhupay.com/payment/do.html');
   const [payNotifyBase, setPayNotifyBase] = useState('');
   const [xhuSecretConfigured, setXhuSecretConfigured] = useState(false);
+  // 静态码"返回即亮"开关：顾客支付返回（离开≥10秒）后立即显示醒目确认大按钮
+  const [scanReturnConfirm, setScanReturnConfirm] = useState(false);
 
   // 云打印机对接配置
   const [autoPrintEnabled, setAutoPrintEnabled] = useState(false);
@@ -147,6 +149,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           setPayNotifyBase(data.data.pay_notify_base || '');
           setXhuSecretConfigured(data.data.xhu_secret_configured === 1);
           setXhuSecretInput('');
+          setScanReturnConfirm(data.data.scan_return_confirm === 1);
           // 打印配置加载
           setAutoPrintEnabled(data.data.auto_print_enabled === 1);
           if (data.data.printer_type) setPrinterType(data.data.printer_type);
@@ -511,6 +514,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           ...(xhuSecretInput.trim() !== '' ? { xhu_secret: xhuSecretInput.trim() } : {}),
           xhu_gateway: xhuGateway.trim(),
           pay_notify_base: payNotifyBase.trim(),
+          scan_return_confirm: scanReturnConfirm ? 1 : 0,
           auto_print_enabled: autoPrintEnabled ? 1 : 0,
           printer_type: printerType,
           printer_name: printerName.trim(),
@@ -1199,6 +1203,29 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               </p>
             </button>
           </div>
+
+          {/* 静态模式专属：返回即亮开关 */}
+          {payMode === 'static' && (
+            <label className="flex items-start space-x-3 p-3.5 bg-sky-50/60 rounded-xl border border-sky-200 cursor-pointer hover:bg-sky-50 transition-colors">
+              <input
+                type="checkbox"
+                checked={scanReturnConfirm}
+                onChange={(e) => setScanReturnConfirm(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-sky-600 rounded-md border-neutral-300 focus:ring-sky-500 cursor-pointer"
+              />
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-neutral-900 flex items-center space-x-1.5">
+                  <Zap className="w-4 h-4 text-sky-600" />
+                  <span>扫码返回即亮（推荐开启）</span>
+                </span>
+                <p className="text-[11px] text-neutral-500 leading-relaxed">
+                  顾客完成支付返回本页（且离开时长超过 10 秒，足以覆盖输金额+输密码的真实支付）后，
+                  立即将确认按钮放大加亮为「我已付款，确认提交」，无需寻找按钮。
+                  关闭时保持经典门禁行为（返回后显示常规确认按钮）。
+                </p>
+              </div>
+            </label>
+          )}
 
           {payMode === 'xunhupay' && (
             <div className="p-4 bg-neutral-50/70 border border-neutral-200 rounded-xl space-y-4">

@@ -27,6 +27,8 @@ interface OrderStatusModalProps {
   /** 支付模式（来自租户设置）：'xunhupay' 且 payChannelReady 时立即结账走动态在线支付 */
   payMode?: 'static' | 'xunhupay';
   payChannelReady?: boolean;
+  /** 静态码"返回即亮"开关（透传 PaymentModal） */
+  scanReturnConfirm?: boolean;
   tenantId?: string;
 }
 
@@ -38,6 +40,7 @@ export default function OrderStatusModal({
   onPaymentSuccess,
   payMode = 'static',
   payChannelReady = false,
+  scanReturnConfirm = false,
   tenantId = 'default',
 }: OrderStatusModalProps) {
   const [order, setOrder] = useState<Order | null>(null);
@@ -482,6 +485,7 @@ export default function OrderStatusModal({
           onConfirmPaid={handleConfirmPay}
           dynamicPay={dynamicPay}
           tenantId={tenantId}
+          scanReturnConfirm={scanReturnConfirm}
           onPaid={handlePaidByChannel}
           onRefreshPay={() => {
             if (payMode === 'xunhupay' && payChannelReady) {

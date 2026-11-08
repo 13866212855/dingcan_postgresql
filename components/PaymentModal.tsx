@@ -33,6 +33,8 @@ interface PaymentModalProps {
   isCreatingPay?: boolean;
   /** 轮询支付状态所需的租户上下文 */
   tenantId?: string;
+  /** 扫码返回即亮（静态模式）：顾客支付返回且离开时长≥10秒时，确认按钮放大加亮为「我已付款，确认提交」 */
+  scanReturnConfirm?: boolean;
 }
 
 export default function PaymentModal({
@@ -50,6 +52,7 @@ export default function PaymentModal({
   onRefreshPay,
   isCreatingPay = false,
   tenantId = 'default',
+  scanReturnConfirm = false,
 }: PaymentModalProps) {
   const [imgError, setImgError] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
@@ -70,9 +73,12 @@ export default function PaymentModal({
   // 未付款者无法从界面分辨还差多久、卡在哪道门
   const CONFIRM_DELAY_BASE = 20;
   const CONFIRM_DELAY_JITTER = 9; // +0~8s → 每次打开 20~28s 随机
+  const AWAY_CONFIRM_MIN_MS = 10000; // "返回即亮"门槛：离开时长≥10秒（覆盖输金额+输密码的真实支付）
   const [confirmDelayLeft, setConfirmDelayLeft] = React.useState(0);
   const [longPressed, setLongPressed] = React.useState(false);
   const [returnedAfterHidden, setReturnedAfterHidden] = React.useState(false);
+  const [qualifiedReturn, setQualifiedReturn] = React.useState(false); // 返回且离开时长达标
+  const hiddenAtRef = React.useRef<number | null>(null);
   const pressStartRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
@@ -82,6 +88,8 @@ export default function PaymentModal({
       setConfirmDelayLeft(initialDelay);
       setLongPressed(false);
       setReturnedAfterHidden(false);
+      setQualifiedReturn(false);
+      hiddenAtRef.current = null;
     }, 0);
     const t = setInterval(() => {
       setConfirmDelayLeft((s) => (s > 0 ? s - 1 : 0));
@@ -92,15 +100,19 @@ export default function PaymentModal({
     };
   }, [isOpen, isDynamic]);
 
-  // 可见性往返探测：微信内长按识别成功→收款面板弹出→本页 hidden；付款完成返回→ visible
+  // 可见性往返探测：微信内长按识别成功→收款面板弹出→本页 hidden；付款完成返回→ visible。
+  // 同时记录离开时长（hidden→visible 差值）：≥10秒判定为"合格返回"（返回即亮模式使用）
   React.useEffect(() => {
     if (!isOpen || isDynamic) return;
     let hiddenOnce = false;
     const onVis = () => {
       if (document.visibilityState === 'hidden') {
         hiddenOnce = true;
+        hiddenAtRef.current = Date.now();
       } else if (hiddenOnce) {
         setReturnedAfterHidden(true);
+        const away = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+        if (away >= AWAY_CONFIRM_MIN_MS) setQualifiedReturn(true);
       }
     };
     document.addEventListener('visibilitychange', onVis);
@@ -177,10 +189,17 @@ export default function PaymentModal({
   const qrExpired = isDynamic && secondsLeft <= 0;
 
   // 确认按钮门禁判定（仅静态模式使用）：
-  // 移动端 = 随机延迟已过 && "切出→切回"往返已发生（硬性，时间到也不放行）；
+  // 移动端 = 随机延迟已过 && "切出→切回"往返已发生；
+  //   返回即亮模式（scanReturnConfirm）下往返还需"离开时长≥10秒"（qualifiedReturn）才放行；
   // 桌面端 = 随机延迟已过
-  const actionGatesPassed = !isMobile ? true : returnedAfterHidden;
+  const actionGatesPassed = !isMobile
+    ? true
+    : scanReturnConfirm
+    ? qualifiedReturn
+    : returnedAfterHidden;
   const canConfirmStatic = confirmDelayLeft === 0 && actionGatesPassed;
+  // 方案A醒目大按钮：移动端 + 返回即亮开启 + 合格返回（离开≥10秒）
+  const showProminentConfirm = scanReturnConfirm && isMobile && qualifiedReturn;
 
   // 长按识别手势探测（≥400ms 视为长按；不阻断系统菜单，只做记录）
   const handlePressStart = () => {
@@ -430,6 +449,16 @@ export default function PaymentModal({
                   className="w-full py-2.5 bg-neutral-100 text-neutral-400 text-xs font-bold rounded-xl cursor-not-allowed flex items-center justify-center"
                 >
                   <span>请先完成二维码支付</span>
+                </button>
+              ) : showProminentConfirm ? (
+                /* 方案A醒目大按钮：合格返回（离开≥10秒）后放大加亮，确认权仍在顾客手中 */
+                <button
+                  onClick={onConfirmPaid}
+                  disabled={isConfirming}
+                  className="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-sm font-black rounded-2xl shadow-lg flex items-center justify-center space-x-2 transition-all active:scale-98 disabled:opacity-70 ring-2 ring-emerald-200 animate-in fade-in"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span>{isConfirming ? '提交中...' : '我已付款，确认提交'}</span>
                 </button>
               ) : (
                 <button
