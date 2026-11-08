@@ -51,6 +51,8 @@ export interface Order {
   points_discount: number;
   points_earned: number;
   instant_rebate?: number; // 积分即时立减金额（静态收款码模式：积分权益下单时以现金立减兑现，该单不再另送积分）
+  packing_fee?: number; // 打包费/单（外卖，来自租户配置；堂食为0）
+  delivery_fee?: number; // 送餐费/单（外卖，满额免配时为0）
   customer_name?: string; // 下单顾客姓名（服务端按 userId 从会员资料带入，接单员在订单卡/详情可见）
   customer_phone?: string; // 下单顾客手机号
   customer_address?: string; // 下单顾客地址（外卖=本次配送地址；堂食=会员档案地址兜底，接单员送餐依据）
@@ -129,6 +131,11 @@ export interface AppSettings {
   xhu_secret_configured?: number; // 密钥是否已配置: 1=已配置, 0=未配置
   pay_channel_ready?: number; // 动态支付通道就绪标志: 1=模式开启且三要素齐全, 0=未就绪（前端回退静态码）
   scan_return_confirm?: number; // 静态码"返回即亮"开关: 1=顾客支付返回(离开≥10秒)后立即显示醒目确认大按钮, 0=经典门禁行为(默认)
+  // 外卖费用配置（按单；默认全 0 = 不启用）
+  takeout_min_amount?: number; // 起送金额: 菜品合计≥此值才可外卖下单 (0=不限制)
+  takeout_packing_fee?: number; // 打包费/单
+  takeout_delivery_fee?: number; // 送餐费/单
+  takeout_free_delivery_over?: number; // 满 X 元(菜品合计)免配送费 (0=不启用)
   // 大模型 (AI大脑) 配置
   llm_base_url?: string; // 大模型服务端点，例如：https://apihub.agnes-ai.com/v1
   llm_api_key?: string; // 大模型授权访问密钥 (API Key)

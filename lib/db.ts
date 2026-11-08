@@ -473,6 +473,8 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS packing_fee DOUBLE PRECISION NOT NULL DEFAULT 0;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee DOUBLE PRECISION NOT NULL DEFAULT 0;
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1364,6 +1366,12 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let xhu_secret_configured = 0; // 密钥是否已配置（0/1 标志位，不回传密钥本身）
   let scan_return_confirm = 0; // 静态码"返回即亮"开关（默认关闭=经典门禁行为）
 
+  // 外卖费用配置（默认全 0 = 不启用，金额计算与旧版完全一致）
+  let takeout_min_amount = 0; // 起送金额：菜品合计≥此值才可外卖下单（0=不限制）
+  let takeout_packing_fee = 0; // 打包费/单
+  let takeout_delivery_fee = 0; // 送餐费/单
+  let takeout_free_delivery_over = 0; // 满 X 元免配送费（0=不启用；按菜品合计判断）
+
   // 大模型 (AI大脑) 默认配置
   let llm_base_url = 'https://apihub.agnes-ai.com/v1';
   let llm_api_key = 'sk-vWM7RHG5n7bljBNi3GgHfygxqiKlUYrPWZLLSUByIGm4BiM9';
@@ -1425,6 +1433,10 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     if (row.key === 'pay_notify_base') pay_notify_base = row.value || '';
     if (row.key === 'xhu_secret' && row.value?.trim()) xhu_secret_configured = 1;
     if (row.key === 'scan_return_confirm') scan_return_confirm = row.value === '1' ? 1 : 0;
+    if (row.key === 'takeout_min_amount') takeout_min_amount = Math.max(0, parseFloat(row.value) || 0);
+    if (row.key === 'takeout_packing_fee') takeout_packing_fee = Math.max(0, parseFloat(row.value) || 0);
+    if (row.key === 'takeout_delivery_fee') takeout_delivery_fee = Math.max(0, parseFloat(row.value) || 0);
+    if (row.key === 'takeout_free_delivery_over') takeout_free_delivery_over = Math.max(0, parseFloat(row.value) || 0);
 
     // LLM配置键值
     if (row.key === 'llm_base_url' && row.value?.trim()) llm_base_url = row.value.trim();
@@ -1494,6 +1506,10 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
     pay_notify_base,
     xhu_secret_configured,
     scan_return_confirm,
+    takeout_min_amount,
+    takeout_packing_fee,
+    takeout_delivery_fee,
+    takeout_free_delivery_over,
     // 通道就绪标志：动态模式 + 三要素齐全（appid/secret/回调基址），前端据此决定走动态支付还是静态码
     pay_channel_ready: pay_mode === 'xunhupay' && !!xhu_appid.trim() && xhu_secret_configured === 1 && !!pay_notify_base.trim() ? 1 : 0,
     llm_base_url,
@@ -1811,20 +1827,39 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
   const rebateCeiling = dynamicPayActive
     ? 0
     : Math.round((total - pointsDiscount) * pointsRatio * 100) / 100;
-  let instantRebate =
-    rebateCeiling >= 0.01
-      ? Math.round((0.01 + Math.random() * (rebateCeiling - 0.01)) * 100) / 100
-      : 0;
-  // 静态模式前端选定随机立减（支付弹窗展示的金额）→ 服务端校验范围后采用，
-  // 保证"顾客照弹窗所付 = 订单落库金额"；超出上限则收敛到上限，低于 0.01 忽略走服务端随机
-  if (!dynamicPayActive && typeof clientRebate === 'number' && isFinite(clientRebate)) {
-    const r = Math.round(clientRebate * 100) / 100;
-    if (r >= 0.01 && r <= rebateCeiling + 0.005) instantRebate = r;
-    else if (r > rebateCeiling + 0.005) instantRebate = rebateCeiling;
+  // 立减仅在客户端显式传正数时采用（超出上限收敛到上限）；显式传 0 或未传 = 不立减——
+  // 保证「顾客所见金额（购物车/弹窗）= 订单落库金额」完全一致（2026-11-09 静态模式取消随机立减浮动）
+  let instantRebate = 0;
+  if (!dynamicPayActive && typeof clientRebate === 'number' && isFinite(clientRebate) && clientRebate >= 0.01) {
+    instantRebate = Math.min(Math.round(clientRebate * 100) / 100, rebateCeiling);
   }
 
-  const finalAmount = Math.max(0, Math.round((total - pointsDiscount - instantRebate) * 100) / 100);
-  const pointsEarned = instantRebate > 0 ? 0 : Math.round(finalAmount * pointsRatio * 100) / 100;
+  // 外卖费用（打包费/送餐费·按单）+ 起送门槛——金额全部来自租户配置，服务端裁定，不经客户端传参
+  // - 起送校验基准 = 菜品合计 total（不含费用、不减积分），行业惯例
+  // - 满额免配送：菜品合计 ≥ takeout_free_delivery_over（>0 启用）时配送费为 0
+  // - 费用不参与积分抵扣与随机立减（立减基数保持菜品小计），仅加进 final_amount
+  const isTakeout = orderType === '外卖';
+  const packingFee = isTakeout ? Math.round((settings.takeout_packing_fee || 0) * 100) / 100 : 0;
+  const minAmount = isTakeout ? Math.round((settings.takeout_min_amount || 0) * 100) / 100 : 0;
+  const freeDeliveryOver = Math.round((settings.takeout_free_delivery_over || 0) * 100) / 100;
+  const deliveryFee =
+    isTakeout && (freeDeliveryOver <= 0 || total < freeDeliveryOver)
+      ? Math.round((settings.takeout_delivery_fee || 0) * 100) / 100
+      : 0;
+  // 起送守卫（前端另有进度提示与按钮禁用，此处为服务端权威校验）
+  if (isTakeout && minAmount > 0 && total < minAmount - 0.005) {
+    throw new Error(
+      `菜品金额 ¥${total.toFixed(2)} 不足起送价 ¥${minAmount.toFixed(2)}，还差 ¥${(minAmount - total).toFixed(2)}`
+    );
+  }
+  const feeAmount = Math.round((packingFee + deliveryFee) * 100) / 100;
+
+  const finalAmount = Math.max(0, Math.round((total - pointsDiscount - instantRebate) * 100) / 100 + feeAmount);
+  // 送积分基数 = 菜品实付（剔除打包/配送费），费用不是消费额
+  const pointsEarned =
+    instantRebate > 0
+      ? 0
+      : Math.round(Math.max(0, finalAmount - feeAmount) * pointsRatio * 100) / 100;
 
   if (userId && paymentStatus === '已支付') {
     const user = await getUser(userId, tenantId);
@@ -1859,9 +1894,9 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
       id, tenant_id, table_no, order_type, delivery_address, delivery_contact, delivery_phone,
       payment_timing, payment_status, total_amount, points_used, points_discount,
       points_earned, final_amount, instant_rebate, status, notes, user_id,
-      customer_name, customer_phone, customer_address, created_at, updated_at
+      customer_name, customer_phone, customer_address, packing_fee, delivery_fee, created_at, updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19, $20, $21, $22
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, '待处理', $16, $17, $18, $19, $20, $21, $22, $23, $24
     )`,
     [
       orderId,
@@ -1884,6 +1919,8 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
       customerName,
       customerPhone,
       customerAddress,
+      packingFee,
+      deliveryFee,
       nowIso,
       nowIso,
     ]
@@ -1908,6 +1945,8 @@ export async function createOrder(params: CreateOrderParams, tenantId = 'default
     customer_name: customerName,
     customer_phone: customerPhone,
     customer_address: customerAddress,
+    packing_fee: packingFee,
+    delivery_fee: deliveryFee,
     payment_timing: paymentTiming,
     payment_status: paymentStatus,
     total_amount: total,

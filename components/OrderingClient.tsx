@@ -899,6 +899,13 @@ export default function OrderingClient({
             : totalPrice
         }
         originalAmount={totalPrice}
+        rebateOverride={
+          createdPendingOrder
+            ? createdPendingOrder.instant_rebate
+            : staticPaySnapshot
+            ? staticPaySnapshot.rebate
+            : null
+        }
         pointsDiscount={createdPendingOrder ? createdPendingOrder.points_discount : staticPaySnapshot?.pointsDiscount ?? 0}
         qrCodeUrl={settings?.payment_qr_code}
         tableOrOrderInfo={

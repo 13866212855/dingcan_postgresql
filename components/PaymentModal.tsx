@@ -35,6 +35,8 @@ interface PaymentModalProps {
   tenantId?: string;
   /** 扫码返回即亮（静态模式）：顾客支付返回且离开时长≥10秒时，确认按钮放大加亮为「我已付款，确认提交」 */
   scanReturnConfirm?: boolean;
+  /** 立减金额显式覆盖：订单含打包/配送费时，派生公式（原价−抵扣−应付）会失真，由父组件直接传入精确立减值 */
+  rebateOverride?: number | null;
 }
 
 export default function PaymentModal({
@@ -53,6 +55,7 @@ export default function PaymentModal({
   isCreatingPay = false,
   tenantId = 'default',
   scanReturnConfirm = false,
+  rebateOverride = null,
 }: PaymentModalProps) {
   const [imgError, setImgError] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
@@ -122,13 +125,17 @@ export default function PaymentModal({
   // ⚠ Hooks 顺序红线：所有 React hook 必须位于下方 `if (!isOpen) return null` 之前，
   // 否则弹窗关闭/打开两态 hook 数量不一致 → React #310 "Rendered more hooks" 白屏崩溃
 
-  // 积分即时立减金额（静态码模式：实付=标价×(1-积分比例)，由服务端算入 amount/final_amount）
+  // 积分即时立减金额：优先用父组件显式覆盖值（订单含打包/配送费时派生公式失真），
+  // 否则按派生公式（原价 − 积分抵扣 − 应付）反推
   const rebateAmount = React.useMemo(() => {
+    if (rebateOverride !== null && rebateOverride !== undefined) {
+      return rebateOverride > 0.005 ? rebateOverride : 0;
+    }
     if (originalAmount === undefined) return 0;
     const payable = isDynamic ? dynamicPay.amount : amount;
     const r = Math.round((originalAmount - pointsDiscount - payable) * 100) / 100;
     return r > 0.005 ? r : 0;
-  }, [originalAmount, pointsDiscount, amount, isDynamic, dynamicPay]);
+  }, [rebateOverride, originalAmount, pointsDiscount, amount, isDynamic, dynamicPay]);
   const isMobile = React.useMemo(() => {
     if (typeof navigator === 'undefined') return false;
     return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent);

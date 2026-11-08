@@ -71,6 +71,11 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   const [xhuSecretConfigured, setXhuSecretConfigured] = useState(false);
   // 静态码"返回即亮"开关：顾客支付返回（离开≥10秒）后立即显示醒目确认大按钮
   const [scanReturnConfirm, setScanReturnConfirm] = useState(false);
+  // 外卖费用配置（按单，0=不启用）
+  const [takeoutMinAmount, setTakeoutMinAmount] = useState(0);
+  const [takeoutPackingFee, setTakeoutPackingFee] = useState(0);
+  const [takeoutDeliveryFee, setTakeoutDeliveryFee] = useState(0);
+  const [takeoutFreeDeliveryOver, setTakeoutFreeDeliveryOver] = useState(0);
 
   // 云打印机对接配置
   const [autoPrintEnabled, setAutoPrintEnabled] = useState(false);
@@ -150,6 +155,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           setXhuSecretConfigured(data.data.xhu_secret_configured === 1);
           setXhuSecretInput('');
           setScanReturnConfirm(data.data.scan_return_confirm === 1);
+          setTakeoutMinAmount(Number(data.data.takeout_min_amount) || 0);
+          setTakeoutPackingFee(Number(data.data.takeout_packing_fee) || 0);
+          setTakeoutDeliveryFee(Number(data.data.takeout_delivery_fee) || 0);
+          setTakeoutFreeDeliveryOver(Number(data.data.takeout_free_delivery_over) || 0);
           // 打印配置加载
           setAutoPrintEnabled(data.data.auto_print_enabled === 1);
           if (data.data.printer_type) setPrinterType(data.data.printer_type);
@@ -515,6 +524,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           xhu_gateway: xhuGateway.trim(),
           pay_notify_base: payNotifyBase.trim(),
           scan_return_confirm: scanReturnConfirm ? 1 : 0,
+          takeout_min_amount: Number(takeoutMinAmount) || 0,
+          takeout_packing_fee: Number(takeoutPackingFee) || 0,
+          takeout_delivery_fee: Number(takeoutDeliveryFee) || 0,
+          takeout_free_delivery_over: Number(takeoutFreeDeliveryOver) || 0,
           auto_print_enabled: autoPrintEnabled ? 1 : 0,
           printer_type: printerType,
           printer_name: printerName.trim(),
@@ -788,7 +801,87 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           </div>
         </div>
 
-        {/* 3. 支付付款时机配置 (餐前付款 / 餐后结账 复选框) */}
+        {/* 3. 外卖起送与费用配置（仅在启用送餐到家时显示） */}
+        {enableTakeout && (
+          <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Truck className="w-5 h-5 text-sky-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900">外卖起送价与配送费用配置</h3>
+                  <p className="text-[11px] text-neutral-400">
+                    仅作用于【送餐到家】订单，按单计费；全部填 0 = 不启用任何限制与费用（实时生效至前台点餐）
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs bg-sky-50 text-sky-700 font-bold px-2.5 py-0.5 rounded-full border border-sky-200">
+                外卖专属
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
+                <label className="block text-[11px] font-bold text-neutral-700">起送金额（元）</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={999}
+                  step={0.5}
+                  value={takeoutMinAmount}
+                  onChange={(e) => setTakeoutMinAmount(Number(e.target.value) || 0)}
+                  className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-neutral-400">菜品合计≥此值才可下单，0=不限</p>
+              </div>
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
+                <label className="block text-[11px] font-bold text-neutral-700">打包费（元/单）</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={999}
+                  step={0.5}
+                  value={takeoutPackingFee}
+                  onChange={(e) => setTakeoutPackingFee(Number(e.target.value) || 0)}
+                  className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-neutral-400">每单固定加收，0=不收</p>
+              </div>
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
+                <label className="block text-[11px] font-bold text-neutral-700">送餐费（元/单）</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={999}
+                  step={0.5}
+                  value={takeoutDeliveryFee}
+                  onChange={(e) => setTakeoutDeliveryFee(Number(e.target.value) || 0)}
+                  className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-neutral-400">每单固定加收，0=不收</p>
+              </div>
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
+                <label className="block text-[11px] font-bold text-neutral-700">满 X 元免配送费</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={999}
+                  step={1}
+                  value={takeoutFreeDeliveryOver}
+                  onChange={(e) => setTakeoutFreeDeliveryOver(Number(e.target.value) || 0)}
+                  className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-neutral-400">菜品合计达此值免配送费，0=不停</p>
+              </div>
+            </div>
+
+            <div className="bg-sky-50/70 border border-sky-200 rounded-xl p-3 text-[11px] text-sky-900 leading-relaxed">
+              示例：起送 8 · 打包 1 · 配送 1 · 满 30 免配送 → 顾客点 10 元菜品实付 ¥12（10+1 打包+1 配送）；
+              点 30 元菜品实付 ¥32（30+1 打包，配送费已免）。顾客不足起送价时，购物车会提示还差多少并可继续加菜。
+            </div>
+          </div>
+        )}
+
+        {/* 4. 支付付款时机配置 (餐前付款 / 餐后结账 复选框) */}
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">

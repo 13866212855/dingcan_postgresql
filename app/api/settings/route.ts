@@ -40,6 +40,10 @@ export async function POST(req: NextRequest) {
       xhu_gateway,
       pay_notify_base,
       scan_return_confirm,
+      takeout_min_amount,
+      takeout_packing_fee,
+      takeout_delivery_fee,
+      takeout_free_delivery_over,
       llm_base_url,
       llm_api_key,
       llm_text_model,
@@ -123,6 +127,21 @@ export async function POST(req: NextRequest) {
     }
     if (scan_return_confirm !== undefined) {
       await updateSetting('scan_return_confirm', scan_return_confirm ? '1' : '0', tenantId);
+    }
+
+    // 外卖费用配置更新（范围 0~999 元，0=不启用）
+    const clampFee = (v: unknown) => Math.min(999, Math.max(0, Number(v) || 0));
+    if (takeout_min_amount !== undefined) {
+      await updateSetting('takeout_min_amount', String(clampFee(takeout_min_amount)), tenantId);
+    }
+    if (takeout_packing_fee !== undefined) {
+      await updateSetting('takeout_packing_fee', String(clampFee(takeout_packing_fee)), tenantId);
+    }
+    if (takeout_delivery_fee !== undefined) {
+      await updateSetting('takeout_delivery_fee', String(clampFee(takeout_delivery_fee)), tenantId);
+    }
+    if (takeout_free_delivery_over !== undefined) {
+      await updateSetting('takeout_free_delivery_over', String(clampFee(takeout_free_delivery_over)), tenantId);
     }
 
     if (payment_qr_code !== undefined) {

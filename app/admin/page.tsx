@@ -1538,11 +1538,18 @@ export default function AdminPage() {
                       <div className="p-3.5 flex-1 space-y-1.5 text-xs">
                         <div className="font-semibold text-[11px] text-neutral-400 uppercase tracking-wider mb-1 flex justify-between">
                           <span>点餐明细 ({order.items?.reduce((acc, i) => acc + i.quantity, 0) || 0} 件)</span>
-                          {(order.points_discount || 0) > 0 && (
-                            <span className="text-amber-700 font-bold">
-                              积分抵扣: -¥{order.points_discount?.toFixed(2)}
-                            </span>
-                          )}
+                          <span className="flex items-center gap-1.5">
+                            {((order.packing_fee || 0) + (order.delivery_fee || 0)) > 0 && (
+                              <span className="text-sky-700 font-bold">
+                                打包+配送: ¥{((order.packing_fee || 0) + (order.delivery_fee || 0)).toFixed(2)}
+                              </span>
+                            )}
+                            {(order.points_discount || 0) > 0 && (
+                              <span className="text-amber-700 font-bold">
+                                积分抵扣: -¥{order.points_discount?.toFixed(2)}
+                              </span>
+                            )}
+                          </span>
                         </div>
                         <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
                           {order.items?.map((item, idx) => (
@@ -2051,6 +2058,18 @@ export default function AdminPage() {
                       <div className="flex justify-between text-amber-700 font-bold">
                         <span>积分抵扣现金 ({selectedOrderDetail.points_used}分)</span>
                         <span>-¥{selectedOrderDetail.points_discount?.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {(selectedOrderDetail.packing_fee || 0) > 0 && (
+                      <div className="flex justify-between text-sky-700">
+                        <span>打包费</span>
+                        <span>+¥{selectedOrderDetail.packing_fee?.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {(selectedOrderDetail.delivery_fee || 0) > 0 && (
+                      <div className="flex justify-between text-sky-700">
+                        <span>送餐费</span>
+                        <span>+¥{selectedOrderDetail.delivery_fee?.toFixed(2)}</span>
                       </div>
                     )}
                     <div className="flex justify-between font-bold text-sm text-neutral-900 pt-1 border-t border-neutral-200">

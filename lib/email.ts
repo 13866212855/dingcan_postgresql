@@ -251,6 +251,22 @@ export async function sendOrderPaymentEmail(
                   </tr>`
                       : ''
                   }
+                  ${
+                    Number(order.packing_fee || 0) > 0
+                      ? `<tr>
+                    <td style="font-size: 13px; color: #0369a1; padding: 3px 0;">打包费（按单）：</td>
+                    <td style="font-size: 13px; color: #0369a1; text-align: right; padding: 3px 0;">+¥${Number(order.packing_fee).toFixed(2)}</td>
+                  </tr>`
+                      : ''
+                  }
+                  ${
+                    Number(order.delivery_fee || 0) > 0
+                      ? `<tr>
+                    <td style="font-size: 13px; color: #0369a1; padding: 3px 0;">送餐费（按单）：</td>
+                    <td style="font-size: 13px; color: #0369a1; text-align: right; padding: 3px 0;">+¥${Number(order.delivery_fee).toFixed(2)}</td>
+                  </tr>`
+                      : ''
+                  }
                   <tr style="border-top: 1px dashed #d6d3d1;">
                     <td style="font-size: 15px; font-weight: 800; color: #0f172a; padding-top: 8px;">实付扫码金额：</td>
                     <td style="font-size: 20px; font-weight: 900; color: #dc2626; text-align: right; padding-top: 8px;">

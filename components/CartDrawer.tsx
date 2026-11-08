@@ -34,7 +34,9 @@ export interface CheckoutOrderData {
   paymentStatus: '未支付' | '已支付';
   pointsUsed: number;
   pointsDiscount: number;
-  finalAmount: number;
+  packingFee: number; // 打包费/单（外卖，来自租户配置；服务端按设置裁定）
+  deliveryFee: number; // 送餐费/单（外卖，满额免配时为0）
+  finalAmount: number; // 含费用的应付合计（弹窗金额=落库金额同源）
   notes: string;
   itemTastes?: Record<number, string>;
 }
@@ -202,7 +204,21 @@ export default function CartDrawer({
   // Maximum points usable cannot exceed total bill
   const maxPointsDeductible = Math.min(availablePoints, totalPrice);
   const pointsDiscount = usePoints ? maxPointsDeductible : 0;
-  const finalAmount = Math.max(0, Math.round((totalPrice - pointsDiscount) * 100) / 100);
+
+  // 外卖费用（按单，来自租户配置；堂食为0）：打包费 + 送餐费（菜品合计满 X 元免配送费）
+  const isTakeout = orderType === '外卖';
+  const takeoutMinAmount = settings?.takeout_min_amount || 0;
+  const packingFee = isTakeout ? Math.round((settings?.takeout_packing_fee || 0) * 100) / 100 : 0;
+  const freeDeliveryOver = Math.round((settings?.takeout_free_delivery_over || 0) * 100) / 100;
+  const deliveryFee =
+    isTakeout && (freeDeliveryOver <= 0 || totalPrice < freeDeliveryOver)
+      ? Math.round((settings?.takeout_delivery_fee || 0) * 100) / 100
+      : 0;
+  const feeAmount = Math.round((packingFee + deliveryFee) * 100) / 100;
+  // 起送门槛：基于菜品合计（不含费用）；不足时禁用提交并提示差额
+  const belowMin = isTakeout && takeoutMinAmount > 0 && totalPrice < takeoutMinAmount - 0.005;
+  const minShortfall = belowMin ? Math.round((takeoutMinAmount - totalPrice) * 100) / 100 : 0;
+  const finalAmount = Math.max(0, Math.round((totalPrice - pointsDiscount) * 100) / 100 + feeAmount);
 
   const toggleItemTaste = (dishId: number, taste: string) => {
     setItemTastes((prev) => {
@@ -237,6 +253,14 @@ export default function CartDrawer({
 
     if (cartItems.length === 0) {
       setErrorMsg('购物车内暂无菜品');
+      return;
+    }
+
+    // 起送门槛守卫（按钮已禁用，此处兜底防绕过）
+    if (belowMin) {
+      setErrorMsg(
+        `菜品金额 ¥${totalPrice.toFixed(2)} 不足起送价 ¥${takeoutMinAmount.toFixed(2)}，还差 ¥${minShortfall.toFixed(2)}`
+      );
       return;
     }
 
@@ -301,6 +325,8 @@ export default function CartDrawer({
         paymentStatus: '未支付', // Will be confirmed in PaymentModal if 餐前付款
         pointsUsed: usePoints ? pointsDiscount : 0,
         pointsDiscount,
+        packingFee,
+        deliveryFee,
         finalAmount,
         notes: finalNotes,
         itemTastes: itemTastesPayload,
@@ -775,44 +801,66 @@ export default function CartDrawer({
         </form>
 
         {/* Footer Checkout Bar */}
-        <div className="p-4 bg-white border-t border-neutral-100 flex items-center justify-between">
-          <div>
-            <div className="text-[11px] text-neutral-500">
-              {pointsDiscount > 0 ? '原价 ¥' + totalPrice.toFixed(2) + ' · 折后实付' : '应付实付'}
+        <div className="p-4 bg-white border-t border-neutral-100">
+          {/* 起送提示 / 费用明细（外卖） */}
+          {belowMin ? (
+            <div className="mb-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 text-center font-bold">
+              菜品 ¥{totalPrice.toFixed(2)} 不足起送价 ¥{takeoutMinAmount.toFixed(2)}，再点 ¥{minShortfall.toFixed(2)} 即可起送
             </div>
-            <div className="text-xl font-black text-rose-600 leading-none">
-              <span className="text-sm font-normal">¥</span>
-              {finalAmount.toFixed(2)}
+          ) : isTakeout && feeAmount > 0 ? (
+            <div className="mb-2.5 text-[11px] text-neutral-500 text-center">
+              菜品 ¥{totalPrice.toFixed(2)}
+              {packingFee > 0 && <span> · 打包费 ¥{packingFee.toFixed(2)}</span>}
+              {deliveryFee > 0 && <span> · 配送费 ¥{deliveryFee.toFixed(2)}</span>}
+              {deliveryFee === 0 && packingFee === 0 && settings && (settings.takeout_delivery_fee || 0) > 0 && (
+                <span className="text-emerald-600 font-bold"> · 已满 ¥{freeDeliveryOver.toFixed(0)} 免配送费</span>
+              )}
             </div>
-          </div>
+          ) : null}
 
-          <button
-            id="btn-submit-order"
-            type="button"
-            onClick={handleSubmit}
-            disabled={cartItems.length === 0 || isSubmitting}
-            className={`px-7 py-3 rounded-2xl text-sm font-bold text-white shadow-md flex items-center space-x-2 transition-all ${
-              cartItems.length === 0 || isSubmitting
-                ? 'bg-neutral-300 cursor-not-allowed'
-                : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98'
-            }`}
-          >
-            {isSubmitting ? (
-              <span className="flex items-center space-x-1.5">
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                <span>提交中...</span>
-              </span>
-            ) : (
-              <>
-                <span>
-                  {effectivePaymentTiming === '餐前付款'
-                    ? '去支付并下单'
-                    : '确认下单 (餐后付)'}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] text-neutral-500">
+                {belowMin
+                  ? `不足起送价 ¥${takeoutMinAmount.toFixed(2)}`
+                  : pointsDiscount > 0
+                  ? '原价 ¥' + totalPrice.toFixed(2) + ' · 折后实付'
+                  : '应付实付'}
+              </div>
+              <div className="text-xl font-black text-rose-600 leading-none">
+                <span className="text-sm font-normal">¥</span>
+                {finalAmount.toFixed(2)}
+              </div>
+            </div>
+
+            <button
+              id="btn-submit-order"
+              type="button"
+              onClick={handleSubmit}
+              disabled={cartItems.length === 0 || isSubmitting || belowMin}
+              className={`px-7 py-3 rounded-2xl text-sm font-bold text-white shadow-md flex items-center space-x-2 transition-all ${
+                cartItems.length === 0 || isSubmitting || belowMin
+                  ? 'bg-neutral-300 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98'
+              }`}
+            >
+              {isSubmitting ? (
+                <span className="flex items-center space-x-1.5">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>提交中...</span>
                 </span>
-                <Send className="w-4 h-4" />
-              </>
-            )}
-          </button>
+              ) : (
+                <>
+                  <span>
+                    {effectivePaymentTiming === '餐前付款'
+                      ? '去支付并下单'
+                      : '确认下单 (餐后付)'}
+                  </span>
+                  <Send className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
