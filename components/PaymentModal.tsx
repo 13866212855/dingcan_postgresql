@@ -189,15 +189,16 @@ export default function PaymentModal({
   const qrExpired = isDynamic && secondsLeft <= 0;
 
   // 确认按钮门禁判定（仅静态模式使用）：
-  // 移动端 = 随机延迟已过 && "切出→切回"往返已发生；
-  //   返回即亮模式（scanReturnConfirm）下往返还需"离开时长≥10秒"（qualifiedReturn）才放行；
+  // 返回即亮模式（scanReturnConfirm，移动端）：**合格返回（切出→切回 且 离开时长≥10秒）直接绕过随机延迟**，
+  //   返回瞬间立即亮出确认大按钮——随机延迟只对未返回/未达标状态有意义（防干等掐点），不该拦真实付款者；
+  // 经典门禁（移动端）：随机延迟已过 && "切出→切回"往返已发生；
   // 桌面端 = 随机延迟已过
   const actionGatesPassed = !isMobile
-    ? true
+    ? confirmDelayLeft === 0
     : scanReturnConfirm
     ? qualifiedReturn
-    : returnedAfterHidden;
-  const canConfirmStatic = confirmDelayLeft === 0 && actionGatesPassed;
+    : confirmDelayLeft === 0 && returnedAfterHidden;
+  const canConfirmStatic = actionGatesPassed;
   // 方案A醒目大按钮：移动端 + 返回即亮开启 + 合格返回（离开≥10秒）
   const showProminentConfirm = scanReturnConfirm && isMobile && qualifiedReturn;
 
