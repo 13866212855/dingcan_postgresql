@@ -72,10 +72,11 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
   // 静态码"返回即亮"开关：顾客支付返回（离开≥10秒）后立即显示醒目确认大按钮
   const [scanReturnConfirm, setScanReturnConfirm] = useState(false);
   // 外卖费用配置（按单，0=不启用）
-  const [takeoutMinAmount, setTakeoutMinAmount] = useState(0);
-  const [takeoutPackingFee, setTakeoutPackingFee] = useState(0);
-  const [takeoutDeliveryFee, setTakeoutDeliveryFee] = useState(0);
-  const [takeoutFreeDeliveryOver, setTakeoutFreeDeliveryOver] = useState(0);
+  // 外卖四费用：字符串态保存输入中间过程（空串/小数点），避免受控数字输入在 iOS 上被强制归 0 而无法编辑；保存时再 Number 化
+  const [takeoutMinAmount, setTakeoutMinAmount] = useState('0');
+  const [takeoutPackingFee, setTakeoutPackingFee] = useState('0');
+  const [takeoutDeliveryFee, setTakeoutDeliveryFee] = useState('0');
+  const [takeoutFreeDeliveryOver, setTakeoutFreeDeliveryOver] = useState('0');
 
   // 云打印机对接配置
   const [autoPrintEnabled, setAutoPrintEnabled] = useState(false);
@@ -155,10 +156,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           setXhuSecretConfigured(data.data.xhu_secret_configured === 1);
           setXhuSecretInput('');
           setScanReturnConfirm(data.data.scan_return_confirm === 1);
-          setTakeoutMinAmount(Number(data.data.takeout_min_amount) || 0);
-          setTakeoutPackingFee(Number(data.data.takeout_packing_fee) || 0);
-          setTakeoutDeliveryFee(Number(data.data.takeout_delivery_fee) || 0);
-          setTakeoutFreeDeliveryOver(Number(data.data.takeout_free_delivery_over) || 0);
+          setTakeoutMinAmount(String(Number(data.data.takeout_min_amount) || 0));
+          setTakeoutPackingFee(String(Number(data.data.takeout_packing_fee) || 0));
+          setTakeoutDeliveryFee(String(Number(data.data.takeout_delivery_fee) || 0));
+          setTakeoutFreeDeliveryOver(String(Number(data.data.takeout_free_delivery_over) || 0));
           // 打印配置加载
           setAutoPrintEnabled(data.data.auto_print_enabled === 1);
           if (data.data.printer_type) setPrinterType(data.data.printer_type);
@@ -823,12 +824,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
                 <label className="block text-[11px] font-bold text-neutral-700">起送金额（元）</label>
                 <input
-                  type="number"
-                  min={0}
-                  max={999}
-                  step={0.5}
+                  type="text"
+                  inputMode="decimal"
                   value={takeoutMinAmount}
-                  onChange={(e) => setTakeoutMinAmount(Number(e.target.value) || 0)}
+                  onChange={(e) => setTakeoutMinAmount(e.target.value.replace(/[^\d.]/g, ''))}
                   className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 />
                 <p className="text-[10px] text-neutral-400">菜品合计≥此值才可下单，0=不限</p>
@@ -836,12 +835,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
                 <label className="block text-[11px] font-bold text-neutral-700">打包费（元/单）</label>
                 <input
-                  type="number"
-                  min={0}
-                  max={999}
-                  step={0.5}
+                  type="text"
+                  inputMode="decimal"
                   value={takeoutPackingFee}
-                  onChange={(e) => setTakeoutPackingFee(Number(e.target.value) || 0)}
+                  onChange={(e) => setTakeoutPackingFee(e.target.value.replace(/[^\d.]/g, ''))}
                   className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 />
                 <p className="text-[10px] text-neutral-400">每单固定加收，0=不收</p>
@@ -849,12 +846,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
                 <label className="block text-[11px] font-bold text-neutral-700">送餐费（元/单）</label>
                 <input
-                  type="number"
-                  min={0}
-                  max={999}
-                  step={0.5}
+                  type="text"
+                  inputMode="decimal"
                   value={takeoutDeliveryFee}
-                  onChange={(e) => setTakeoutDeliveryFee(Number(e.target.value) || 0)}
+                  onChange={(e) => setTakeoutDeliveryFee(e.target.value.replace(/[^\d.]/g, ''))}
                   className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 />
                 <p className="text-[10px] text-neutral-400">每单固定加收，0=不收</p>
@@ -862,15 +857,13 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
               <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 space-y-1.5">
                 <label className="block text-[11px] font-bold text-neutral-700">满 X 元免配送费</label>
                 <input
-                  type="number"
-                  min={0}
-                  max={999}
-                  step={1}
+                  type="text"
+                  inputMode="decimal"
                   value={takeoutFreeDeliveryOver}
-                  onChange={(e) => setTakeoutFreeDeliveryOver(Number(e.target.value) || 0)}
+                  onChange={(e) => setTakeoutFreeDeliveryOver(e.target.value.replace(/[^\d.]/g, ''))}
                   className="w-full px-2.5 py-2 text-xs font-mono bg-white border border-neutral-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 />
-                <p className="text-[10px] text-neutral-400">菜品合计达此值免配送费，0=不停</p>
+                <p className="text-[10px] text-neutral-400">菜品合计达此值免配送费，0=不免</p>
               </div>
             </div>
 
