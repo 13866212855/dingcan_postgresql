@@ -66,6 +66,7 @@ export default function AdminPage() {
   // 其他值/空 = 分店管理员或旧会话 → 无订单删除权（服务端同样 fail-closed 校验）
   const [adminScope, setAdminScope] = useState<string>('');
   const canDeleteOrders = !isStaffMode && adminScope === 'default';
+  const canDeleteMembers = !isStaffMode && adminScope === 'default';
 
   // Multi-Tenant state:
   // 当直接访问 /admin 时（URL 无 tenant 参数），坚决严格锁定总后台 'default'，杜绝继承前台遗留的分店 cookie/localStorage！
@@ -1860,7 +1861,7 @@ export default function AdminPage() {
           <TableManagement tenantId={currentTenantId} />
         ) : activeTab === 'members' ? (
           /* ================= MEMBER MANAGEMENT MODULE ================= */
-          <MemberManagement tenantId={currentTenantId} />
+          <MemberManagement tenantId={currentTenantId} canDelete={canDeleteMembers} />
         ) : activeTab === 'staff' ? (
           /* ================= STAFF (ORDER HANDLER) MANAGEMENT MODULE ================= */
           <StaffManagement tenantId={currentTenantId} />

@@ -1721,6 +1721,12 @@ export async function getAllUsers(tenantId = 'default'): Promise<AppUser[]> {
   return res.rows.map((row) => formatRow<AppUser>(row));
 }
 
+export async function deleteUser(id: string, tenantId = 'default'): Promise<boolean> {
+  const pool = await ensureDatabase();
+  const res = await pool.query('DELETE FROM users WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  return (res.rowCount || 0) > 0;
+}
+
 // ----------------------------------------------------
 // Orders Operations (Isolated by Tenant)
 // ----------------------------------------------------

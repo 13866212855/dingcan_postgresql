@@ -10,21 +10,28 @@ import {
   PlusCircle,
   ShieldCheck,
   AlertCircle,
+  AlertTriangle,
   Phone,
   Calendar,
   CheckCircle2,
+  Trash2,
 } from 'lucide-react';
 import { AppUser } from '@/types';
 
 interface MemberManagementProps {
   tenantId?: string;
+  canDelete?: boolean;
 }
 
-export default function MemberManagement({ tenantId = 'default' }: MemberManagementProps) {
+export default function MemberManagement({ tenantId = 'default', canDelete = false }: MemberManagementProps) {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [rechargeModalUser, setRechargeModalUser] = useState<AppUser | null>(null);
+  const [userToDelete, setUserToDelete] = useState<AppUser | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [actionSuccessNotice, setActionSuccessNotice] = useState('');
 
   // Form state
   const [pointsDelta, setPointsDelta] = useState<number>(100);
@@ -120,6 +127,35 @@ export default function MemberManagement({ tenantId = 'default' }: MemberManagem
     }
   };
 
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const res = await fetch(
+        `/api/users?tenant=${encodeURIComponent(tenantId)}&id=${encodeURIComponent(userToDelete.id)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        setActionSuccessNotice(
+          `已成功删除会员【${userToDelete.name || userToDelete.phone || userToDelete.id}】及其积分资产记录`
+        );
+        setUserToDelete(null);
+        fetchUsers();
+        setTimeout(() => setActionSuccessNotice(''), 4000);
+      } else {
+        setDeleteError(data.error || '删除失败，请稍后重试');
+      }
+    } catch (err: any) {
+      setDeleteError(err?.message || '网络连接异常');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const totalPoints = users.reduce((acc, u) => acc + (u.points || 0), 0);
   const verifiedCount = users.filter((u) => u.is_verified === 1).length;
 
@@ -128,12 +164,21 @@ export default function MemberManagement({ tenantId = 'default' }: MemberManagem
       {/* Header */}
       <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-bold text-neutral-900 flex items-center space-x-2">
-            <Users className="w-5 h-5 text-amber-600" />
-            <span>会员与积分资产管理</span>
-          </h2>
-          <p className="text-xs text-neutral-500 mt-0.5">
+          <div className="flex items-center space-x-2">
+            <h2 className="text-base font-bold text-neutral-900 flex items-center space-x-2">
+              <Users className="w-5 h-5 text-amber-600" />
+              <span>会员与积分资产管理</span>
+            </h2>
+            {canDelete && (
+              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                <ShieldCheck className="w-3 h-3 text-rose-600" />
+                <span>主租户最高权限：支持删除会员积分</span>
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-neutral-500 mt-1">
             查看顾客实名身份、积分余额、累计消费统计，支持后台管理员给会员充值积分与余额
+            {canDelete ? '；主管理员可直接删除指定会员及清空积分' : ''}
           </p>
         </div>
 
@@ -146,6 +191,13 @@ export default function MemberManagement({ tenantId = 'default' }: MemberManagem
           <span>刷新列表</span>
         </button>
       </div>
+
+      {actionSuccessNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center space-x-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{actionSuccessNotice}</span>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
@@ -238,12 +290,27 @@ export default function MemberManagement({ tenantId = 'default' }: MemberManagem
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleOpenRecharge(u)}
-                        className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-[11px] shadow-2xs transition-all active:scale-95"
-                      >
-                        充值积分/余额
-                      </button>
+                      <div className="flex items-center justify-end space-x-1.5">
+                        <button
+                          onClick={() => handleOpenRecharge(u)}
+                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-[11px] shadow-2xs transition-all active:scale-95 cursor-pointer"
+                        >
+                          充值积分/余额
+                        </button>
+                        {canDelete && (
+                          <button
+                            onClick={() => {
+                              setUserToDelete(u);
+                              setDeleteError('');
+                            }}
+                            className="px-2.5 py-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-[11px] font-bold flex items-center space-x-1 border border-transparent hover:border-rose-200 cursor-pointer group"
+                            title="主管理员专属：彻底删除该会员及其积分资产"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-neutral-400 group-hover:text-rose-600" />
+                            <span className="text-neutral-500 group-hover:text-rose-600">删除</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -331,6 +398,90 @@ export default function MemberManagement({ tenantId = 'default' }: MemberManagem
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <h3 className="font-bold text-neutral-900 text-base mb-1">
+              确认彻底删除该会员及积分记录？
+            </h3>
+            <p className="text-xs text-neutral-500 mb-4 leading-relaxed">
+              您正在以<strong className="text-neutral-800">【主店总管理员】</strong>最高权限执行操作。此操作将彻底删除此顾客在该分店的所有账户及积分记录。
+            </p>
+
+            <div className="p-3.5 bg-neutral-50 rounded-2xl border border-neutral-200/80 mb-4 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-neutral-500">会员信息：</span>
+                <span className="font-bold text-neutral-900">
+                  {userToDelete.name || '未实名'} {userToDelete.phone ? `(${userToDelete.phone})` : ''}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-neutral-500">用户唯一识别码：</span>
+                <span className="font-mono text-neutral-600">{userToDelete.id}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-neutral-500">所属分店：</span>
+                <span className="font-bold text-amber-600 font-mono">{tenantId}</span>
+              </div>
+              <div className="flex justify-between items-center border-t border-neutral-200/60 pt-2 mt-2">
+                <span className="text-neutral-500">当前可用积分：</span>
+                <span className="font-black text-rose-600 text-sm">{userToDelete.points || 0} 分</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-neutral-500">会员钱包余额：</span>
+                <span className="font-bold text-rose-600">¥{(userToDelete.balance || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-neutral-500">历史累计消费：</span>
+                <span className="font-medium text-neutral-700">¥{(userToDelete.total_spent || 0).toFixed(2)}</span>
+              </div>
+            </div>
+
+            {deleteError && (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <p className="text-[11px] text-rose-600 font-bold mb-4 flex items-center space-x-1">
+              <span>⚠️ 警告：删除后该用户的积分资产将被清空且无法恢复！</span>
+            </p>
+
+            <div className="flex space-x-2.5">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  setUserToDelete(null);
+                  setDeleteError('');
+                }}
+                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                取消保留
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleDeleteConfirm}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors disabled:opacity-50 flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                {deleting ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>{deleting ? '正在删除...' : '确认彻底删除'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
