@@ -728,12 +728,16 @@ ${params.text.trim().slice(0, 6000)}
  */
 export async function generateDishImageWithAI(params: {
   dishName: string;
+  description?: string;
+  category?: string;
   tenantId?: string;
 }): Promise<{ success: boolean; url?: string; publicId?: string; error?: string }> {
   const config = await getLLMConfig(params.tenantId);
   const endpoint = `${config.baseUrl.replace(/\/+$/, '')}/images/generations`;
 
-  const prompt = `专业餐厅菜单美食摄影：一盘刚出锅的中华名菜「${params.dishName}」，白瓷盘精致摆盘，暖色自然光照，色泽诱人、香气扑鼻的质感，浅景深特写俯拍，高清细节，无文字无水印`;
+  const catSnippet = params.category && params.category !== 'custom' ? `，所属分类「${params.category}」` : '';
+  const descSnippet = params.description && params.description.trim() ? `，特色风味描述：「${params.description.trim().slice(0, 100)}」` : '';
+  const prompt = `专业高端餐厅菜单美食摄影：一道新鲜出炉、色香味俱全的美味佳肴「${params.dishName}」${catSnippet}${descSnippet}，精致盛装摆盘，自然暖色柔光，色泽光亮诱人、令人食指大动，45度微距特写浅景深，4K商业美食摄影大片质感，真实菜品实拍，绝对无文字无水印无乱码无变形杂物`;
 
   const sizesToTry = ['1024x1024', '512x512'];
   let lastError = '图片模型未返回有效结果';

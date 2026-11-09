@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { analyzeDishImageWithAI, generateDishDescriptionWithAI } from '@/lib/llm';
+import { analyzeDishImageWithAI, generateDishDescriptionWithAI, generateDishImageWithAI } from '@/lib/llm';
 import { getTenantIdFromRequest } from '@/lib/tenant';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +8,23 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const tenantId = body.tenantId || getTenantIdFromRequest(req);
-    const { action, imageUrl, imageBase64, dishName, category, currentDescription, existingCategories } = body;
+    const { action, imageUrl, imageBase64, dishName, category, currentDescription, description, existingCategories } = body;
+
+    if (action === 'generate_image') {
+      if (!dishName || !dishName.trim()) {
+        return NextResponse.json(
+          { success: false, error: '请先输入菜品名称，以便AI大模型生成专属配图' },
+          { status: 400 }
+        );
+      }
+      const result = await generateDishImageWithAI({
+        dishName: dishName.trim(),
+        description: description || currentDescription,
+        category,
+        tenantId,
+      });
+      return NextResponse.json(result);
+    }
 
     if (action === 'analyze_image') {
       if (!imageUrl && !imageBase64) {

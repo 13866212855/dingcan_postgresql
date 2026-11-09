@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2, Sparkles, Zap, Brain, Crop as CropIcon, Eye } from 'lucide-react';
+import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2, Sparkles, Zap, Brain, Crop as CropIcon, Eye, RefreshCw, Undo2 } from 'lucide-react';
 import { Dish } from '@/types';
 import ImageCropModal, { AspectRatioType } from './ImageCropModal';
 
@@ -113,6 +113,9 @@ function DishFormInner({
   const [optimizationNotice, setOptimizationNotice] = useState<string>('');
   const [aiSuccessNotice, setAiSuccessNotice] = useState<string>('');
   const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiImageGenerating, setAiImageGenerating] = useState(false);
+  const [previousImageBeforeAi, setPreviousImageBeforeAi] = useState<string | null>(null);
+  const [hasAiGeneratedImage, setHasAiGeneratedImage] = useState(false);
 
   // 统一应用 AI 视觉大模型推断出的菜品信息（名称、单价、分类、特色描述、口味）
   const applyAiAnalysisResult = (ai: any) => {
@@ -309,6 +312,61 @@ function DishFormInner({
     }
   };
 
+  // AI 配图生成（根据菜品名称、描述和分类智能绘制诱人餐厅实拍图）
+  const handleGenerateAiImage = async () => {
+    if (!name.trim()) {
+      setErrorMsg('请先填写菜品名称，以便 AI 绘制专属美味佳肴配图！');
+      return;
+    }
+    setAiImageGenerating(true);
+    setErrorMsg('');
+    setAiSuccessNotice('');
+    setOptimizationNotice('');
+
+    // 记录生成前的原图，方便商户随时撤回
+    if (!previousImageBeforeAi && image) {
+      setPreviousImageBeforeAi(image);
+    }
+
+    try {
+      const finalCategory = category === 'custom' ? customCategory.trim() : category;
+      const res = await fetch('/api/admin/llm/dish-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_image',
+          dishName: name.trim(),
+          description: description.trim(),
+          category: finalCategory,
+          tenantId: tenantId || 'default',
+        }),
+      });
+
+      const json = await res.json();
+      if (json.success && json.url) {
+        setImage(json.url);
+        setHasAiGeneratedImage(true);
+        setAiSuccessNotice(`🎉 AI 为【${name.trim()}】专属绘制的美食图片已生成并自动填入！若需不同视角或光影可点击【换一张】。`);
+      } else {
+        setErrorMsg(json.error || 'AI 绘制菜品图片失败，请检查网络或稍后重试');
+      }
+    } catch (err: any) {
+      setErrorMsg('调用 AI 配图异常: ' + (err?.message || '网络连接超时'));
+    } finally {
+      setAiImageGenerating(false);
+    }
+  };
+
+  // 撤回恢复 AI 生成前的原图
+  const handleUndoAiImage = () => {
+    if (previousImageBeforeAi) {
+      setImage(previousImageBeforeAi);
+      setPreviousImageBeforeAi(null);
+      setHasAiGeneratedImage(false);
+      setAiSuccessNotice('已恢复为 AI 生成前的原始图片。');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -412,7 +470,7 @@ function DishFormInner({
             <div className="flex items-start space-x-2">
               <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold text-neutral-800">AI 大脑看图智能推断完成</p>
+                <p className="font-bold text-neutral-800">AI 智能赋能已完成</p>
                 <p className="text-neutral-600 mt-0.5 leading-relaxed">{aiSuccessNotice}</p>
               </div>
             </div>
@@ -573,25 +631,74 @@ function DishFormInner({
               ) : (
                 <div className="flex items-center justify-center h-full text-neutral-400 text-xs">无图</div>
               )}
+              {aiImageGenerating && (
+                <div className="absolute inset-0 bg-neutral-900/80 backdrop-blur-2xs flex flex-col items-center justify-center text-white text-[10px] p-1 text-center font-medium z-10 animate-pulse">
+                  <Loader2 className="w-5 h-5 animate-spin mb-1 text-purple-300" />
+                  <span>AI配图中...</span>
+                </div>
+              )}
             </div>
             <div className="flex-1 space-y-2">
               <div className="flex items-center flex-wrap gap-2">
-                <label className="cursor-pointer px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl font-medium flex items-center space-x-1.5 transition-colors">
+                <label className="cursor-pointer px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-xl font-medium flex items-center space-x-1.5 transition-colors text-xs">
                   {uploading ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
                   ) : (
                     <Upload className="w-3.5 h-3.5" />
                   )}
-                  <span>{uploading ? 'AI 视觉分析与优化中...' : '上传本地图片'}</span>
+                  <span>{uploading ? 'AI 视觉分析中...' : '上传本地图片'}</span>
                   <input
                     type="file"
                     accept="image/*"
                     onChange={handleFileUpload}
                     className="hidden"
-                    disabled={uploading}
+                    disabled={uploading || aiImageGenerating}
                   />
                 </label>
-                <span className="text-[11px] text-neutral-400">支持 jpg/png/webp · 自动压缩与AI推断</span>
+
+                {/* AI 配图按钮 */}
+                <button
+                  type="button"
+                  onClick={handleGenerateAiImage}
+                  disabled={aiImageGenerating || uploading}
+                  className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl font-semibold text-xs flex items-center space-x-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                  title="根据菜品名称与描述，AI 自动绘制写实诱人的餐厅实拍美食大片"
+                >
+                  {aiImageGenerating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-200" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  )}
+                  <span>{aiImageGenerating ? 'AI精心摆盘中...' : 'Ai配图'}</span>
+                </button>
+
+                {/* 换一张功能 */}
+                {hasAiGeneratedImage && !aiImageGenerating && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateAiImage}
+                    disabled={aiImageGenerating || uploading}
+                    className="px-2.5 py-1.5 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-xl border border-purple-200 flex items-center space-x-1 transition-colors cursor-pointer"
+                    title="换一个角度或光影重新生成"
+                  >
+                    <RefreshCw className="w-3 h-3 text-purple-600" />
+                    <span>换一张</span>
+                  </button>
+                )}
+
+                {/* 撤回原图功能 */}
+                {previousImageBeforeAi && !aiImageGenerating && (
+                  <button
+                    type="button"
+                    onClick={handleUndoAiImage}
+                    className="px-2.5 py-1.5 text-xs font-medium text-neutral-600 bg-neutral-100 hover:bg-neutral-200 rounded-xl border border-neutral-200 flex items-center space-x-1 transition-colors cursor-pointer"
+                    title="恢复生成前的原图"
+                  >
+                    <Undo2 className="w-3 h-3 text-neutral-500" />
+                    <span>撤回原图</span>
+                  </button>
+                )}
+
                 {image && (image.startsWith('/uploads/') || image.includes('cloudinary.com')) && (
                   <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                     <Cloud className="w-3 h-3 mr-1 text-emerald-600" />
