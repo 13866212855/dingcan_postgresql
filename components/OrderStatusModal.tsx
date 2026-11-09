@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Order } from '@/types';
 import PaymentModal, { DynamicPayData } from './PaymentModal';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface OrderStatusModalProps {
   orderId: string | null;
@@ -62,10 +63,8 @@ export default function OrderStatusModal({
           cache: 'no-store',
         });
         if (!res.ok) return;
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
 
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (data.success && data.data) {
           setOrder(data.data);
           setLastRefreshed(new Date());
@@ -91,10 +90,8 @@ export default function OrderStatusModal({
           cache: 'no-store',
         });
         if (!res.ok) return;
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
 
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (isMounted && data.success && data.data) {
           setOrder(data.data);
           setLastRefreshed(new Date());
@@ -133,7 +130,7 @@ export default function OrderStatusModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId: order.id }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.data?.payUrl) {
         setDynamicPay({ orderId: order.id, ...data.data });
       } else if (data.data?.alreadyPaid) {
@@ -166,7 +163,7 @@ export default function OrderStatusModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paymentStatus: '已支付' }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setShowPayModal(false);
         await fetchOrder(true);

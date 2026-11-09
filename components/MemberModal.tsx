@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { X, Award, ShieldCheck, Phone, User, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 import { AppUser } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface MemberModalProps {
   isOpen: boolean;
@@ -55,7 +56,7 @@ export default function MemberModal({
           tenant_id: tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.data) {
         onUserUpdated(data.data);
         setSuccessMsg('实名认证成功！您已开通会员权益与积分抵现功能。');

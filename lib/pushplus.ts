@@ -152,12 +152,12 @@ export async function sendOrderPushPlusNotification(
         }),
       });
 
-      const data = await res.json();
+      const data = (await res.json().catch(() => ({}))) || {};
       if (data.code === 1000) {
         return { success: true, message: 'WxPusher 微信消息已成功推送' };
       } else {
         console.warn('[WxPusher Warning]', data);
-        return { success: false, error: data.msg || `WxPusher 响应码: ${data.code}` };
+        return { success: false, error: data.msg || `WxPusher 响应码: ${data.code || '未知'}` };
       }
     }
 
@@ -179,7 +179,7 @@ export async function sendOrderPushPlusNotification(
         body: JSON.stringify(pushPayload),
       });
 
-      const data = await res.json();
+      const data = (await res.json().catch(() => ({}))) || {};
       if (data.code === 200) {
         return { success: true, message: data.msg || 'PushPlus 微信强提醒推送成功' };
       } else {
@@ -265,11 +265,11 @@ export async function sendTestWxPusherNotification(
       }),
     });
 
-    const data = await res.json();
+    const data = (await res.json().catch(() => ({}))) || {};
     if (data.code === 1000) {
       return { success: true, message: '测试消息已成功发送至您的微信，请留意手机微信提示音！' };
     } else {
-      return { success: false, error: data.msg || `WxPusher 错误码: ${data.code}` };
+      return { success: false, error: data.msg || `WxPusher 错误码: ${data.code || '未知'}` };
     }
   } catch (err: any) {
     return { success: false, error: err?.message || '网络连接超时' };
@@ -333,11 +333,11 @@ export async function sendTestPushPlusNotification(
       body: JSON.stringify(pushPayload),
     });
 
-    const data = await res.json();
+    const data = (await res.json().catch(() => ({}))) || {};
     if (data.code === 200) {
       return { success: true, message: '测试消息已成功发送至您的微信，请留意手机微信提示音！' };
     } else {
-      return { success: false, error: data.msg || `PushPlus 错误码: ${data.code}` };
+      return { success: false, error: data.msg || `PushPlus 错误码: ${data.code || '未知'}` };
     }
   } catch (err: any) {
     return { success: false, error: err?.message || '网络连接超时' };

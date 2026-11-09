@@ -49,8 +49,12 @@ export async function safeFetchJson<T>(
         return null;
       }
 
-      const data = await res.json();
-      return data as T;
+      const text = await res.text();
+      const trimmed = text.trim();
+      if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+        return null;
+      }
+      return JSON.parse(trimmed) as T;
     } catch (err: any) {
       // Aborted by caller (e.g. component unmount or URL navigation)
       if (err?.name === 'AbortError' || signal?.aborted) {

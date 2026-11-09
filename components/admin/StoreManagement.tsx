@@ -21,6 +21,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 // 精选餐厅预设高品质图标库，方便掌柜一键选用
 const PRESET_LOGOS = [
@@ -77,7 +78,7 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
       setLoading(true);
       try {
         const res = await fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`);
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (data.success && data.data) {
           if (data.data.restaurant_name) {
             setRestaurantName(data.data.restaurant_name);
@@ -120,7 +121,7 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.url) {
         setRestaurantLogo(data.url);
         setSuccessMsg('店面图标图片上传成功，请点击下方「保存店面信息」立即生效！');
@@ -185,7 +186,7 @@ export default function StoreManagement({ tenantId = 'default', onStoreUpdated }
           restaurant_slogan: restaurantSlogan.trim(),
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setSuccessMsg('店面信息已成功保存！前台首页与后台导航栏已同步即时更新生效。');
         if (onStoreUpdated && data.data) {

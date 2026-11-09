@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AppUser } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface MemberManagementProps {
   tenantId?: string;
@@ -43,8 +44,8 @@ export default function MemberManagement({ tenantId = 'default', canDelete = fal
     setLoading(true);
     try {
       const res = await fetch(`/api/users?tenant=${encodeURIComponent(tenantId)}`);
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
+      const data = await parseJsonResponse(res);
+      if (data?.success && Array.isArray(data.data)) {
         setUsers(data.data);
       }
     } catch (e) {
@@ -59,8 +60,8 @@ export default function MemberManagement({ tenantId = 'default', canDelete = fal
     const load = async () => {
       try {
         const res = await fetch(`/api/users?tenant=${encodeURIComponent(tenantId)}`);
-        const data = await res.json();
-        if (isMounted && data.success && Array.isArray(data.data)) {
+        const data = await parseJsonResponse(res);
+        if (isMounted && data?.success && Array.isArray(data.data)) {
           setUsers(data.data);
         }
       } catch (e) {
@@ -113,12 +114,12 @@ export default function MemberManagement({ tenantId = 'default', canDelete = fal
           tenantId,
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         setRechargeModalUser(null);
         fetchUsers();
       } else {
-        setErrorMsg(data.error || '充值失败');
+        setErrorMsg(data?.error || '充值失败');
       }
     } catch (err: any) {
       setErrorMsg(err.message || '网络连接异常');
@@ -138,8 +139,8 @@ export default function MemberManagement({ tenantId = 'default', canDelete = fal
           method: 'DELETE',
         }
       );
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         setActionSuccessNotice(
           `已成功删除会员【${userToDelete.name || userToDelete.phone || userToDelete.id}】及其积分资产记录`
         );
@@ -147,7 +148,7 @@ export default function MemberManagement({ tenantId = 'default', canDelete = fal
         fetchUsers();
         setTimeout(() => setActionSuccessNotice(''), 4000);
       } else {
-        setDeleteError(data.error || '删除失败，请稍后重试');
+        setDeleteError(data?.error || '删除失败，请稍后重试');
       }
     } catch (err: any) {
       setDeleteError(err?.message || '网络连接异常');

@@ -15,6 +15,7 @@ import {
   Info,
 } from 'lucide-react';
 import { StaffUser } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface StaffManagementProps {
   tenantId?: string;
@@ -45,11 +46,11 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
         headers: { Accept: 'application/json' },
         cache: 'no-store',
       });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
+      const data = await parseJsonResponse(res);
+      if (data?.success && Array.isArray(data.data)) {
         setStaffList(data.data);
       } else {
-        setError(data.error || '获取接单员列表失败');
+        setError(data?.error || '获取接单员列表失败');
       }
     } catch (e: any) {
       setError('加载失败: ' + (e?.message || ''));
@@ -66,12 +67,12 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
           headers: { Accept: 'application/json' },
           cache: 'no-store',
         });
-        const data = await res.json();
+        const data = await parseJsonResponse(res);
         if (!ignore) {
-          if (data.success && Array.isArray(data.data)) {
+          if (data?.success && Array.isArray(data.data)) {
             setStaffList(data.data);
           } else {
-            setError(data.error || '获取接单员列表失败');
+            setError(data?.error || '获取接单员列表失败');
           }
         }
       } catch (e: any) {
@@ -105,15 +106,15 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
           password: newPassword.trim() || undefined,
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         setNotice(`✅ ${data.message || '接单员已添加'}`);
         setNewName('');
         setNewPhone('');
         setNewPassword('');
         fetchStaff();
       } else {
-        setError(data.error || '添加失败');
+        setError(data?.error || '添加失败');
       }
     } catch (e: any) {
       setError('添加请求失败: ' + (e?.message || ''));
@@ -131,11 +132,11 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: staff.enabled === 1 ? 0 : 1 }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         fetchStaff();
       } else {
-        alert(data.error || `${action}失败`);
+        alert(data?.error || `${action}失败`);
       }
     } catch (e: any) {
       alert('操作失败: ' + (e?.message || ''));
@@ -155,11 +156,11 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: pwd.trim() }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         alert(`已重置【${staff.name}】的登录密码`);
       } else {
-        alert(data.error || '重置失败');
+        alert(data?.error || '重置失败');
       }
     } catch (e: any) {
       alert('操作失败: ' + (e?.message || ''));
@@ -172,11 +173,11 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
       const res = await fetch(`/api/admin/staff/${staff.id}?tenant=${encodeURIComponent(tenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await parseJsonResponse(res);
+      if (data?.success) {
         fetchStaff();
       } else {
-        alert(data.error || '删除失败');
+        alert(data?.error || '删除失败');
       }
     } catch (e: any) {
       alert('操作失败: ' + (e?.message || ''));

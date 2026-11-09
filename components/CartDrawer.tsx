@@ -23,6 +23,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { CartItem, Dish, DiningTable, AppUser, AppSettings } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 export interface CheckoutOrderData {
   tableNo: string;
@@ -147,7 +148,7 @@ export default function CartDrawer({
         try {
           const { latitude, longitude } = pos.coords;
           const res = await fetch(`/api/location/geocode?lat=${latitude}&lng=${longitude}`);
-          const json = await res.json();
+          const json = await parseJsonResponse<any>(res, { success: false });
           if (json.success && json.data?.formattedAddress) {
             setDeliveryAddress(json.data.formattedAddress);
           } else {

@@ -39,6 +39,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { AppSettings } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface SettingsManagementProps {
   tenantId?: string;
@@ -134,7 +135,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
       setLoading(true);
       try {
         const res = await fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`);
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (data.success && data.data) {
           setQrCodeUrl(data.data.payment_qr_code || '');
           setPointsRatio(data.data.points_ratio ?? 1);
@@ -226,7 +227,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.url) {
         setQrCodeUrl(data.url);
         setSuccessMsg('收款码图片已成功上传并生成链接，请点击下方「保存全部配置」！');
@@ -300,7 +301,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setTestPrintResult({
           success: true,
@@ -343,7 +344,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setTestEmailResult({
           success: true,
@@ -387,7 +388,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           },
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.data) {
         setDiagnosticReport(data.data);
       } else {
@@ -437,7 +438,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
             tenantId,
           }),
         });
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (data.success) {
           setTestPushResult({
             success: true,
@@ -476,7 +477,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setTestPushResult({
           success: true,
@@ -556,7 +557,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setSuccessMsg('系统运营就餐方式、桌号规则、支付付款时机、收款码与积分配置已成功保存并立即生效！');
       } else {

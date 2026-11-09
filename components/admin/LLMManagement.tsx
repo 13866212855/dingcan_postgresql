@@ -27,6 +27,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { LLMConfig, DEFAULT_LLM_CONFIG } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface LLMManagementProps {
   tenantId?: string;
@@ -88,7 +89,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
       setLoading(true);
       try {
         const res = await fetch(`/api/admin/llm?tenant=${encodeURIComponent(tenantId)}`);
-        const json = await res.json();
+        const json = await parseJsonResponse<any>(res, { success: false });
         if (json.success && json.data) {
           const cfg = json.data as LLMConfig;
           setBaseUrl(cfg.baseUrl || DEFAULT_LLM_CONFIG.baseUrl);
@@ -135,7 +136,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
           quality,
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success) {
         setSuccessMsg(json.message || '大模型大脑配置已保存成功！');
         setTimeout(() => setSuccessMsg(''), 4000);
@@ -164,7 +165,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resetToDefault: true }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success) {
         setBaseUrl(DEFAULT_LLM_CONFIG.baseUrl);
         setApiKey(DEFAULT_LLM_CONFIG.apiKey);
@@ -202,7 +203,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
           prompt: textPrompt,
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false, error: '解析响应失败' });
       setTextTestResult(json);
     } catch (err: any) {
       setTextTestResult({
@@ -231,7 +232,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
           prompt: imagePrompt,
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false, error: '解析响应失败' });
       setImageTestResult(json);
     } catch (err: any) {
       setImageTestResult({
@@ -263,7 +264,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
           imageUrl: targetUrl,
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success) {
         setVisionTestResult(json.data);
       } else {
@@ -291,7 +292,7 @@ export default function LLMManagement({ tenantId = 'default' }: LLMManagementPro
         method: 'POST',
         body: fd,
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.url) {
         setVisionImageUrl(data.url);
         // 直接触发分析

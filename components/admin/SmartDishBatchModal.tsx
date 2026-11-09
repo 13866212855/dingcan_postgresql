@@ -14,6 +14,7 @@ import {
   ImagePlus,
 } from 'lucide-react';
 import { Dish } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface SmartDishBatchModalProps {
   isOpen: boolean;
@@ -119,7 +120,7 @@ function SmartBatchInner({
           existingCategories: categoryOptions,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (!data.success || !Array.isArray(data.data)) {
         setParseError(data.error || 'AI 解析失败，请稍后重试');
         return;
@@ -171,7 +172,7 @@ function SmartBatchInner({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'generate_image', dishName: row.name, tenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.url) {
         updateRow(row.key, { image: data.url, imgStatus: 'done' });
         return true;
@@ -226,7 +227,7 @@ function SmartBatchInner({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dishes: payload, tenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         alert(data.message || `批量添加完成：成功 ${data.data?.created ?? payload.length} 道`);
         onSuccess();

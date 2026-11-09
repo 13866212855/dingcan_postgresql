@@ -27,6 +27,7 @@ import PaymentModal, { DynamicPayData } from '@/components/PaymentModal';
 import { Dish, CartItem, DiningTable, AppUser, AppSettings, Order } from '@/types';
 import { useStorageItem, getClientUserId, safeSetItem } from '@/lib/storage';
 import { safeFetchJson } from '@/lib/fetchUtils';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface OrderingClientProps {
   initialDishes: Dish[];
@@ -360,7 +361,7 @@ export default function OrderingClient({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false, error: '下单服务响应异常' });
       if (!data.success) {
         throw new Error(data.error || '下单失败');
       }
@@ -414,7 +415,7 @@ export default function OrderingClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false, error: '支付响应异常' });
       if (data.success && data.data?.payUrl) {
         setDynamicPayData({ orderId, ...data.data });
         setIsPaymentModalOpen(true);
@@ -523,7 +524,7 @@ export default function OrderingClient({
             body: JSON.stringify({ paymentStatus: '已支付' }),
           }
         );
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false, error: '更新失败' });
         if (!data.success) throw new Error(data.error || '支付状态更新失败');
         finishOrderSuccess();
       } catch (e: any) {

@@ -47,6 +47,7 @@ import LLMManagement from '@/components/admin/LLMManagement';
 import { Dish, Order, Tenant, StaffUser } from '@/types';
 import { safeSetItem, safeRemoveItem } from '@/lib/storage';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
+import { parseJsonResponse } from '@/lib/utils';
 
 export default function AdminPage() {
   // Auth state（方案二：单一智能登录表单——身份由账号形态自动识别：纯数字=接单员手机号，其他=管理员账号。
@@ -179,8 +180,8 @@ export default function AdminPage() {
   const fetchTenants = useCallback(async (tenantId = currentTenantId) => {
     try {
       const res = await fetch(`/api/tenants?tenant=${encodeURIComponent(tenantId)}`);
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
+      const data = await parseJsonResponse(res);
+      if (data?.success && Array.isArray(data.data)) {
         setTenants(data.data);
       }
     } catch (e) {
@@ -191,8 +192,8 @@ export default function AdminPage() {
   const fetchStoreBranding = useCallback(async (tenantId = currentTenantId) => {
     try {
       const res = await fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`);
-      const data = await res.json();
-      if (data.success && data.data) {
+      const data = await parseJsonResponse(res);
+      if (data?.success && data.data) {
         setStoreInfo({
           name: data.data.restaurant_name || '客来香·家常菜馆',
           logo: data.data.restaurant_logo || '',
@@ -211,7 +212,7 @@ export default function AdminPage() {
     const checkAuthAndTenants = async () => {
       try {
         const res = await fetch('/api/admin/check');
-        const data = await res.json();
+        const data = await parseJsonResponse(res);
         if (!isCancelled) {
           if (data?.authenticated) {
             if (data.role === 'staff' && data.staff) {
@@ -246,8 +247,8 @@ export default function AdminPage() {
 
       try {
         const res = await fetch(`/api/tenants?tenant=${encodeURIComponent(currentTenantId)}`);
-        const data = await res.json();
-        if (!isCancelled && data.success && Array.isArray(data.data)) {
+        const data = await parseJsonResponse(res);
+        if (!isCancelled && data?.success && Array.isArray(data.data)) {
           setTenants(data.data);
         }
       } catch (e) {
@@ -282,8 +283,8 @@ export default function AdminPage() {
     const loadBranding = async () => {
       try {
         const res = await fetch(`/api/settings?tenant=${encodeURIComponent(currentTenantId)}`);
-        const data = await res.json();
-        if (!isCancelled && data.success && data.data) {
+        const data = await parseJsonResponse(res);
+        if (!isCancelled && data?.success && data.data) {
           setStoreInfo({
             name: data.data.restaurant_name || (currentTenantId === 'default' ? '客来香·家常菜馆' : currentTenantId),
             logo: data.data.restaurant_logo || '',
@@ -311,10 +312,7 @@ export default function AdminPage() {
         cache: 'no-store',
       });
       if (!res.ok) return;
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) return;
-
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && Array.isArray(data.data)) {
         setDishes(data.data);
       }
@@ -335,10 +333,8 @@ export default function AdminPage() {
           cache: 'no-store',
         });
         if (!res.ok) return;
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
 
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (data.success && Array.isArray(data.data)) {
           const fetchedOrders: Order[] = data.data;
 
@@ -423,9 +419,7 @@ export default function AdminPage() {
               cache: 'no-store',
             });
             if (!res.ok) return null;
-            const ct = res.headers.get('content-type') || '';
-            if (!ct.includes('application/json')) return null;
-            return await res.json();
+            return await parseJsonResponse<any>(res, null);
           } catch {
             return null;
           }
@@ -500,8 +494,8 @@ export default function AdminPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: account, password: pass, tenant: currentTenantId }),
         });
-        const data = await res.json();
-        if (data.success && data.staff) {
+        const data = await parseJsonResponse(res);
+        if (data?.success && data.staff) {
           setStaffInfo(data.staff);
           setAdminScope('');
           setIsAuthenticated(true);
@@ -512,7 +506,7 @@ export default function AdminPage() {
             updateActiveTenant(data.staff.tenantId);
           }
         } else {
-          setLoginError(data.error || '手机号或密码错误，请联系店长');
+          setLoginError(data?.error || '手机号或密码错误，请联系店长');
         }
       } else {
         // —— 管理员通道（账号登录）——
@@ -523,8 +517,8 @@ export default function AdminPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: account, password: pass, tenant: knownTenant }),
         });
-        const data = await res.json();
-        if (data.success) {
+        const data = await parseJsonResponse(res);
+        if (data?.success) {
           setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
           setAdminScope(knownTenant); // 登录身份范围 = 登录时所在租户（服务端同步写 scope cookie）
           setIsAuthenticated(true);
@@ -532,7 +526,7 @@ export default function AdminPage() {
           updateActiveTenant(knownTenant);
           setLoginPass('');
         } else {
-          setLoginError('账号或密码错误');
+          setLoginError(data?.error || '账号或密码错误');
         }
       }
     } catch (err: any) {
@@ -567,7 +561,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/orders/${order.id}?tenant=${encodeURIComponent(currentTenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         if (selectedOrderDetail && selectedOrderDetail.id === order.id) {
           setSelectedOrderDetail(null);
@@ -592,7 +586,7 @@ export default function AdminPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus, tenantId: currentTenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         fetchOrders(true);
         if (selectedOrderDetail && selectedOrderDetail.id === orderId) {
@@ -623,7 +617,7 @@ export default function AdminPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paymentStatus: newStatus, tenantId: currentTenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         fetchOrders(true);
         if (selectedOrderDetail && selectedOrderDetail.id === orderId) {
@@ -651,7 +645,7 @@ export default function AdminPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus, tenantId: currentTenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setDishes((prev) =>
           prev.map((d) => (d.id === dish.id ? { ...d, status: newStatus } : d))
@@ -669,7 +663,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/dishes/${dishId}?tenant=${encodeURIComponent(currentTenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         fetchDishes();
       } else {
@@ -690,16 +684,16 @@ export default function AdminPage() {
         `/api/dishes/import-from-master?tenant=${encodeURIComponent(currentTenantId)}`,
         { headers: { Accept: 'application/json' }, cache: 'no-store' }
       );
-      const prevData = await prevRes.json();
+      const prevData = await parseJsonResponse<any>(prevRes, { success: false });
       if (!prevData.success) {
         alert(prevData.error || '获取拉取预览失败');
         return;
       }
       const p = prevData.data;
 
-      if (p.toImport === 0) {
+      if (!p || p.toImport === 0) {
         alert(
-          `总店(主租户)菜品库共 ${p.masterTotal} 道菜品，均已存在于您的菜品库中（同名自动跳过），本次没有需要新导入的菜品。`
+          `总店(主租户)菜品库共 ${p?.masterTotal ?? 0} 道菜品，均已存在于您的菜品库中（同名自动跳过），本次没有需要新导入的菜品。`
         );
         return;
       }
@@ -712,7 +706,7 @@ export default function AdminPage() {
         `/api/dishes/import-from-master?tenant=${encodeURIComponent(currentTenantId)}`,
         { method: 'POST' }
       );
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         alert(data.message || '拉取完成');
         fetchDishes();
@@ -742,7 +736,7 @@ export default function AdminPage() {
       const res = await fetch(`/api/dishes?tenant=${encodeURIComponent(currentTenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         alert(data.message || '菜品库已清空');
         fetchDishes();

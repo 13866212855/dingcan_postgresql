@@ -22,6 +22,7 @@ import {
   Save,
 } from 'lucide-react';
 import { DiningTable } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface TableManagementProps {
   tenantId?: string;
@@ -67,8 +68,8 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
         fetch(`/api/tables?tenant=${encodeURIComponent(tenantId)}`),
         fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`),
       ]);
-      const data = await tablesRes.json();
-      const setJson = await settingsRes.json();
+      const data = await parseJsonResponse<any>(tablesRes, { success: false });
+      const setJson = await parseJsonResponse<any>(settingsRes, { success: false });
 
       if (data.success && Array.isArray(data.data)) {
         setTables(data.data);
@@ -100,8 +101,8 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
           fetch(`/api/tables?tenant=${encodeURIComponent(tenantId)}`),
           fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`),
         ]);
-        const data = await tablesRes.json();
-        const setJson = await settingsRes.json();
+        const data = await parseJsonResponse<any>(tablesRes, { success: false });
+        const setJson = await parseJsonResponse<any>(settingsRes, { success: false });
         if (isMounted) {
           if (data.success && Array.isArray(data.data)) {
             setTables(data.data);
@@ -140,7 +141,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
           tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setTableConfigSavedMsg('✅ 就餐桌号规则已成功更新并生效！');
         setTimeout(() => setTableConfigSavedMsg(''), 3000);
@@ -187,7 +188,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
           tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setIsBatchModalOpen(false);
         fetchTables();
@@ -232,7 +233,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
             tenantId,
           }),
         });
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (!data.success) throw new Error(data.error);
       } else {
         // Add
@@ -245,7 +246,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
             tenantId,
           }),
         });
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (!data.success) throw new Error(data.error);
       }
 
@@ -266,7 +267,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_occupied: newOccupied, tenantId }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         setTables((prev) =>
           prev.map((item) => (item.id === t.id ? { ...item, is_occupied: newOccupied } : item))
@@ -284,7 +285,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
       const res = await fetch(`/api/tables/${t.id}?tenant=${encodeURIComponent(tenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         fetchTables();
       } else {
@@ -301,7 +302,7 @@ export default function TableManagement({ tenantId = 'default' }: TableManagemen
       const res = await fetch(`/api/tables?tenant=${encodeURIComponent(tenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         fetchTables();
       } else {

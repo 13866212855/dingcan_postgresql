@@ -23,6 +23,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Tenant } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface TenantManagementProps {
   currentTenantId: string;
@@ -86,7 +87,7 @@ export default function TenantManagement({
     setErrorMsg('');
     try {
       const res = await fetch(`/api/tenants?tenant=${encodeURIComponent(currentTenantId)}`);
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && Array.isArray(data.data)) {
         setTenants(data.data);
       } else {
@@ -104,7 +105,7 @@ export default function TenantManagement({
     const load = async () => {
       try {
         const res = await fetch(`/api/tenants?tenant=${encodeURIComponent(currentTenantId)}`);
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, { success: false });
         if (!isCancelled) {
           if (data.success && Array.isArray(data.data)) {
             setTenants(data.data);
@@ -192,7 +193,7 @@ export default function TenantManagement({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (!data.success) {
         throw new Error(data.error || '保存失败');
       }
@@ -222,7 +223,7 @@ export default function TenantManagement({
       const res = await fetch(`/api/tenants?id=${encodeURIComponent(t.id)}&tenant=${encodeURIComponent(currentTenantId)}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (!data.success) {
         throw new Error(data.error || '删除失败');
       }

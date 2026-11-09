@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { X, Upload, Check, Image as ImageIcon, Cloud, Loader2, Sparkles, Zap, Brain, Crop as CropIcon, Eye, RefreshCw, Undo2 } from 'lucide-react';
 import { Dish } from '@/types';
 import ImageCropModal, { AspectRatioType } from './ImageCropModal';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface DishFormModalProps {
   isOpen: boolean;
@@ -219,7 +220,7 @@ function DishFormInner({
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.url) {
         setImage(data.url);
         if (data.optimization?.is_optimized) {
@@ -264,7 +265,7 @@ function DishFormInner({
           tenantId: tenantId || 'default',
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success && json.description) {
         setDescription(json.description);
         setAiSuccessNotice(`✨ AI 已为【${name.trim()}】润色撰写了专属垂涎美食介绍！`);
@@ -299,7 +300,7 @@ function DishFormInner({
           existingCategories: DEFAULT_CATEGORIES,
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success && json.data) {
         applyAiAnalysisResult(json.data);
       } else {
@@ -342,7 +343,7 @@ function DishFormInner({
         }),
       });
 
-      const json = await res.json();
+      const json = await parseJsonResponse<any>(res, { success: false });
       if (json.success && json.url) {
         setImage(json.url);
         setHasAiGeneratedImage(true);
@@ -411,7 +412,7 @@ function DishFormInner({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success) {
         onSuccess();
         onClose();

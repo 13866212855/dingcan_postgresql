@@ -3,6 +3,7 @@
 import React from 'react';
 import { X, QrCode, CheckCircle2, AlertCircle, Sparkles, RefreshCw, Loader2, Smartphone, ExternalLink } from 'lucide-react';
 import Image from 'next/image';
+import { parseJsonResponse } from '@/lib/utils';
 
 export interface DynamicPayData {
   orderId: string; // 平台订单号（轮询支付状态用）
@@ -158,9 +159,7 @@ export default function PaymentModal({
           `/api/pay/status?orderId=${encodeURIComponent(dynamicPay.orderId)}&tenant=${encodeURIComponent(tenantId)}`,
           { cache: 'no-store' }
         );
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
-        const data = await res.json();
+        const data = await parseJsonResponse<any>(res, null);
         if (!stopped && data?.success && data?.data?.paymentStatus === '已支付') {
           setPaidDetected(true);
           setTimeout(() => onPaid?.(), 1200);

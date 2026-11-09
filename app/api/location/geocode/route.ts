@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         const amapUrl = `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(amapKey)}&location=${lng.toFixed(6)},${lat.toFixed(6)}&extensions=all`;
         const res = await fetch(amapUrl, { signal: controller.signal });
         clearTimeout(timeout);
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (data.status === '1' && data.regeocode?.formatted_address) {
           const regeo = data.regeocode;
           const addressComp = regeo.addressComponent || {};
@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
       const res = await fetch(bdcUrl, { signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json().catch(() => ({}))) || {};
         const province = data.principalSubdivision || '';
         const city = data.city || '';
         const locality = data.locality || '';
@@ -125,7 +125,7 @@ export async function GET(req: NextRequest) {
       });
       clearTimeout(timeout);
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json().catch(() => ({}))) || {};
         if (data.display_name) {
           // Nominatim 会返回较冗长的国家/省市结构，做适当友好修剪
           const addr = data.address || {};

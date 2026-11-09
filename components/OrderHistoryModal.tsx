@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, ReceiptText, ChevronRight, Clock, Truck, MapPin } from 'lucide-react';
 import { Order } from '@/types';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface OrderHistoryModalProps {
   isOpen: boolean;
@@ -33,9 +34,7 @@ export default function OrderHistoryModal({
               cache: 'no-store',
             });
             if (!res.ok) return null;
-            const ct = res.headers.get('content-type') || '';
-            if (!ct.includes('application/json')) return null;
-            return await res.json();
+            return await parseJsonResponse<any>(res, null);
           } catch {
             return null;
           }

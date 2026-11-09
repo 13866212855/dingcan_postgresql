@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AppUser } from '@/types';
 import { getClientUserId } from '@/lib/storage';
+import { parseJsonResponse } from '@/lib/utils';
 
 interface CustomerInfoModalProps {
   isOpen: boolean;
@@ -91,7 +92,7 @@ export default function CustomerInfoModal({
           const res = await fetch(
             `/api/location/geocode?lat=${latitude}&lng=${longitude}&tenant=${encodeURIComponent(tenantId)}`
           );
-          const json = await res.json();
+          const json = await parseJsonResponse<any>(res, { success: false });
 
           if (json.success && json.data?.formattedAddress) {
             const formatted = json.data.formattedAddress;
@@ -174,7 +175,7 @@ export default function CustomerInfoModal({
           tenant_id: tenantId,
         }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<any>(res, { success: false });
       if (data.success && data.data) {
         onSaved(data.data);
       } else {

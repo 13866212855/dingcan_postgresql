@@ -99,7 +99,13 @@ export async function xunhuCreatePayment(opts: {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    const json: Record<string, unknown> = await res.json();
+    const text = await res.text();
+    let json: Record<string, unknown> = {};
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, errcode: -1, errmsg: `支付网关返回非JSON响应: ${text.slice(0, 100)}` };
+    }
 
     // 统一转成字符串表（历史遗留：orderid 返回名是 openid）
     const flat: Record<string, string> = {};
