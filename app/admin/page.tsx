@@ -36,9 +36,12 @@ import {
   UserCog,
   Bike,
   Zap,
+  FileJson,
+  FileUp,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
+import JsonDishImportModal from '@/components/admin/JsonDishImportModal';
 import StaffManagement from '@/components/admin/StaffManagement';
 import TableManagement from '@/components/admin/TableManagement';
 import MemberManagement from '@/components/admin/MemberManagement';
@@ -177,6 +180,10 @@ export default function AdminPage() {
   const [isImportingDishes, setIsImportingDishes] = useState(false);
   const [isSmartBatchOpen, setIsSmartBatchOpen] = useState(false);
   const [isClearingDishes, setIsClearingDishes] = useState(false);
+  // JSON 导出/导入（门店间菜品搬运：导出本店全量菜品为 JSON 文件；导入别店导出的文件）
+  const [isJsonImportOpen, setIsJsonImportOpen] = useState(false);
+  const [isExportingDishes, setIsExportingDishes] = useState(false);
+  const [exportWithImages, setExportWithImages] = useState(false);
 
   // Auto-unlock audio on any mobile/desktop user interaction
   useEffect(() => {
@@ -820,6 +827,38 @@ export default function AdminPage() {
       alert('清空请求失败: ' + (e?.message || ''));
     } finally {
       setIsClearingDishes(false);
+    }
+  };
+
+  // 导出当前门店全部菜品为 JSON 文件（含在售与已下架；勾选「含图片」则内嵌 base64 供跨服务器迁移）
+  const handleExportDishesJson = async () => {
+    if (isExportingDishes) return;
+    setIsExportingDishes(true);
+    try {
+      const res = await fetch(
+        `/api/dishes/export?tenant=${encodeURIComponent(currentTenantId)}${exportWithImages ? '&with_images=1' : ''}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) {
+        const d = await parseJsonResponse<any>(res, { success: false });
+        throw new Error(d?.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = /filename\*=UTF-8''([^;]+)/.exec(cd);
+      const fname = m ? decodeURIComponent(m[1]) : `dishes_${Date.now()}.json`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('导出失败: ' + (e?.message || ''));
+    } finally {
+      setIsExportingDishes(false);
     }
   };
 
@@ -1933,6 +1972,41 @@ export default function AdminPage() {
                   </button>
                 )}
 
+                {/* JSON 导出/导入：门店间菜品搬运（同部署直接可用；跨服务器导出时勾选「含图片」） */}
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  <button
+                    id="btn-export-dishes-json"
+                    onClick={handleExportDishesJson}
+                    disabled={isExportingDishes}
+                    className="px-3.5 py-2 bg-white border border-sky-200 hover:border-sky-400 hover:bg-sky-50 text-sky-600 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="导出本店全部菜品（含价格/分类/描述/口味选项/上下架状态）为 JSON 文件，可用于备份或导入到其他门店"
+                  >
+                    <FileJson className={`w-4 h-4 ${isExportingDishes ? 'animate-pulse' : ''}`} />
+                    <span>{isExportingDishes ? '导出中...' : '导出 JSON'}</span>
+                  </button>
+                  <label
+                    className="flex items-center space-x-1 text-[10px] font-bold text-neutral-500 cursor-pointer select-none"
+                    title="勾选后图片以 base64 内嵌进 JSON（文件变大），供另一套独立部署的服务器导入；同系统内门店间搬运无需勾选"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={exportWithImages}
+                      onChange={(e) => setExportWithImages(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-sky-600"
+                    />
+                    <span>含图片</span>
+                  </label>
+                  <button
+                    id="btn-import-dishes-json"
+                    onClick={() => setIsJsonImportOpen(true)}
+                    className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center space-x-1.5 transition-transform active:scale-95 shrink-0"
+                    title="导入本系统导出的菜品 JSON 文件（同名菜品自动跳过，只新增不覆盖）"
+                  >
+                    <FileUp className="w-4 h-4" />
+                    <span>导入 JSON</span>
+                  </button>
+                </div>
+
                 {/* 智能批量添加：粘贴菜单文本，AI 解析菜名价格并生成配图后一键入库 */}
                 <button
                   id="btn-smart-batch-dishes"
@@ -2166,6 +2240,15 @@ export default function AdminPage() {
       <SmartDishBatchModal
         isOpen={isSmartBatchOpen}
         onClose={() => setIsSmartBatchOpen(false)}
+        onSuccess={() => fetchDishes()}
+        tenantId={currentTenantId}
+        existingDishes={dishes}
+      />
+
+      {/* JSON 菜品导入弹窗（门店间菜品搬运） */}
+      <JsonDishImportModal
+        isOpen={isJsonImportOpen}
+        onClose={() => setIsJsonImportOpen(false)}
         onSuccess={() => fetchDishes()}
         tenantId={currentTenantId}
         existingDishes={dishes}
