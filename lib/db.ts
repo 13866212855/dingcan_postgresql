@@ -2120,6 +2120,18 @@ export async function updateOrderStatus(
     isKitchen = staffInfo.role === 'kitchen';
   }
 
+  // 所有权防御（2026-11-11）：外卖单的"已完成"只能由骑手送达（或管理员通过配送"送达完成"按钮）触发——
+  // 即必须显式携带 deliveryStatus='已送达'。后厨/后台的出餐动作试图直接完成外卖单时，
+  // 强制降级为"制作中"：防止误把外卖单踢出骑手可见池、并向顾客端误报"配送完成"。
+  // 堂食单不受影响（后厨出餐即完成）。
+  if (order.order_type === '外卖' && status === '已完成' && extra?.deliveryStatus !== '已送达') {
+    console.warn(
+      '[updateOrderStatus] 已拦截出餐动作试图直接完成外卖单，主状态降级为制作中:',
+      id
+    );
+    status = '制作中';
+  }
+
   // 计算后厨备餐状态
   const newKitchenStatus =
     extra?.kitchenStatus ||

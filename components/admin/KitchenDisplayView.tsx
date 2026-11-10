@@ -443,6 +443,10 @@ export default function KitchenDisplayView({
             const isCookingNow = order.kitchen_status === '制作中';
             const isKitchenReady = order.kitchen_status === '已备齐';
             const isLoadingThis = actionLoadingId === order.id;
+            // 配送动态（后厨↔骑手互见）：外卖单已备齐后展示骑手接单/取货/配送进度
+            const isDeliveryOrder = order.order_type === '外卖';
+            const dStatus = order.delivery_status || '待接单';
+            const riderNameK = (order.rider_name || '').trim();
 
             return (
               <div
@@ -604,10 +608,46 @@ export default function KitchenDisplayView({
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                       <span>已出餐完成</span>
                     </div>
+                  ) : isKitchenReady ? (
+                    /* 第三态：后厨已备齐——外卖单等待配送取餐（含骑手动态互见），堂食待收尾 */
+                    <div className="space-y-1.5">
+                      <div className="py-2 text-center text-xs font-bold text-emerald-700 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-center space-x-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>{isDeliveryOrder ? '已备齐 · 等待配送取餐' : '已备齐出餐'}</span>
+                      </div>
+                      {isDeliveryOrder && (
+                        <div
+                          className={`py-1.5 px-2 text-center text-[11px] font-bold rounded-xl border flex items-center justify-center space-x-1.5 ${
+                            dStatus === '配送中'
+                              ? 'bg-sky-50 border-sky-200 text-sky-700'
+                              : dStatus === '已接单' || dStatus === '提货中'
+                              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                              : dStatus === '已送达'
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-amber-50 border-amber-200 text-amber-700'
+                          }`}
+                        >
+                          <Bike className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            {dStatus === '配送中'
+                              ? riderNameK
+                                ? `骑手 ${riderNameK} 配送中`
+                                : '骑手配送中'
+                              : dStatus === '已接单' || dStatus === '提货中'
+                              ? riderNameK
+                                ? `骑手 ${riderNameK} 已接单 · 即将取货`
+                                : '骑手已接单 · 即将取货'
+                              : dStatus === '已送达'
+                              ? '已送达'
+                              : '等待骑手接单取餐...'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   ) : allReadyMade ? (
                     /* 全单现成菜品：提供极其醒目的【⚡ 一键齐餐出餐】大按钮 */
                     <button
-                      onClick={() => handleUpdateKitchenStatus(order, '已备齐', '已完成')}
+                      onClick={() => handleUpdateKitchenStatus(order, '已备齐')}
                       disabled={isLoadingThis}
                       className="w-full py-2.5 px-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-black rounded-xl text-xs shadow-md shadow-blue-500/20 active:scale-98 transition-all flex items-center justify-center space-x-2 cursor-pointer"
                     >
@@ -638,7 +678,7 @@ export default function KitchenDisplayView({
                       )}
 
                       <button
-                        onClick={() => handleUpdateKitchenStatus(order, '已备齐', '已完成')}
+                        onClick={() => handleUpdateKitchenStatus(order, '已备齐')}
                         disabled={isLoadingThis}
                         className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center space-x-1 cursor-pointer"
                       >

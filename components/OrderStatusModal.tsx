@@ -176,22 +176,57 @@ export default function OrderStatusModal({
     }
   };
 
-  const getStepIndex = (status?: string) => {
-    switch (status) {
-      case '待处理':
-        return 1;
-      case '制作中':
-        return 2;
-      case '已完成':
-        return 3;
-      case '已取消':
-        return -1;
-      default:
-        return 1;
-    }
-  };
+  // 双轨状态驱动（2026-11-11）：制作进度看 kitchen_status、配送进度看 delivery_status，
+  // 每步独立点亮互不阻塞（后厨不动不影响骑手配送步骤推进）；旧数据字段缺失按主状态兜底；
+  // 送达后整条全亮。外卖单的"配送完成"只有骑手真正送达才亮。
+  const isDeliveryOrder = order?.order_type === '外卖';
+  const mainStatus = order?.status;
+  const kitchenStatus =
+    order?.kitchen_status ||
+    (mainStatus === '已完成' ? '已备齐' : mainStatus === '制作中' ? '制作中' : '待备餐');
+  const deliveryStatus =
+    order?.delivery_status || (mainStatus === '已完成' ? '已送达' : '待接单');
+  const riderName = (order?.rider_name || '').trim();
+  const isCancelled = mainStatus === '已取消';
+  const isDelivered = deliveryStatus === '已送达' || mainStatus === '已完成';
 
-  const stepIndex = getStepIndex(order?.status);
+  const stepDefs: { icon: React.ComponentType<{ className?: string }>; label: string; lit: boolean }[] =
+    isDeliveryOrder
+      ? [
+          { icon: Clock, label: '已接单', lit: true },
+          { icon: ChefHat, label: '制作中', lit: kitchenStatus === '制作中' || kitchenStatus === '已备齐' || isDelivered },
+          { icon: CheckCircle2, label: '已备齐', lit: kitchenStatus === '已备齐' || isDelivered },
+          { icon: Truck, label: '配送中', lit: ['已接单', '提货中', '配送中'].includes(deliveryStatus) || isDelivered },
+          { icon: Check, label: '已送达', lit: isDelivered },
+        ]
+      : [
+          { icon: Clock, label: '已接单', lit: true },
+          { icon: ChefHat, label: '大厨现炒', lit: kitchenStatus === '制作中' || kitchenStatus === '已备齐' || mainStatus === '已完成' },
+          { icon: Check, label: '已上齐', lit: kitchenStatus === '已备齐' || mainStatus === '已完成' },
+        ];
+
+  const maxLitIndex = stepDefs.reduce((m, s, i) => (s.lit ? i : m), 0);
+  const fillPercent = stepDefs.length > 1 ? (maxLitIndex / (stepDefs.length - 1)) * 100 : 100;
+
+  // 进度条下方的情景文案（含骑手实名，增强顾客知情权）
+  const riderTag = riderName ? `骑手 ${riderName} ` : '骑手';
+  let hint: string;
+  if (isDeliveryOrder) {
+    if (isDelivered) hint = '餐品已妥善送达，祝您用餐愉快！';
+    else if (deliveryStatus === '配送中') hint = `${riderTag}正快马加鞭配送中，请您保持电话畅通...`;
+    else if (deliveryStatus === '已接单' || deliveryStatus === '提货中')
+      hint =
+        kitchenStatus === '已备齐'
+          ? `${riderTag}已接单，即将上门取货...`
+          : `${riderTag}已接单，等待后厨备餐齐餐...`;
+    else if (kitchenStatus === '已备齐') hint = '餐品已备齐打包，等待骑手接单取餐...';
+    else if (kitchenStatus === '制作中') hint = '大厨正猛火现炒，色香味俱全即将出锅！';
+    else hint = '后厨已打印菜票，正在排单洗菜切配...';
+  } else {
+    if (mainStatus === '已完成') hint = '菜品已全部上齐，请慢用！如有需要请联系服务员。';
+    else if (kitchenStatus === '制作中') hint = '大厨正猛火现炒，色香味俱全即将出锅！';
+    else hint = '后厨已打印菜票，正在排单洗菜切配...';
+  }
 
   return (
     <>
@@ -230,72 +265,46 @@ export default function OrderStatusModal({
 
           {/* Content Body */}
           <div className="p-5 flex-1 overflow-y-auto space-y-4">
-            {/* Step Progress Bar */}
-            {stepIndex !== -1 ? (
+            {/* Step Progress Bar（外卖 5 步：制作+配送双轨；堂食 3 步：制作轨） */}
+            {!isCancelled ? (
               <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200/80">
                 <div className="relative flex justify-between items-center mb-2">
                   <div className="absolute left-6 right-6 top-1/2 -translate-y-1/2 h-1 bg-neutral-200 -z-0">
                     <div
                       className="h-full bg-amber-500 transition-all duration-500"
-                      style={{
-                        width: stepIndex === 1 ? '0%' : stepIndex === 2 ? '50%' : '100%',
-                      }}
+                      style={{ width: `${fillPercent}%` }}
                     />
                   </div>
 
-                  {/* Step 1 */}
-                  <div className="flex flex-col items-center relative z-10">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                        stepIndex >= 1
-                          ? 'bg-amber-500 text-white shadow-xs'
-                          : 'bg-neutral-200 text-neutral-500'
-                      }`}
-                    >
-                      <Clock className="w-4 h-4" />
-                    </div>
-                    <span className="text-[11px] font-bold mt-1 text-neutral-800">已接单</span>
-                  </div>
-
-                  {/* Step 2 */}
-                  <div className="flex flex-col items-center relative z-10">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                        stepIndex >= 2
-                          ? 'bg-amber-500 text-white shadow-xs'
-                          : 'bg-neutral-200 text-neutral-500'
-                      }`}
-                    >
-                      <ChefHat className="w-4 h-4" />
-                    </div>
-                    <span className="text-[11px] font-bold mt-1 text-neutral-800">大厨现炒</span>
-                  </div>
-
-                  {/* Step 3 */}
-                  <div className="flex flex-col items-center relative z-10">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                        stepIndex >= 3
-                          ? 'bg-emerald-500 text-white shadow-xs'
-                          : 'bg-neutral-200 text-neutral-500'
-                      }`}
-                    >
-                      <Check className="w-4 h-4" />
-                    </div>
-                    <span className="text-[11px] font-bold mt-1 text-neutral-800">
-                      {order?.order_type === '外卖' ? '配送完成' : '已上齐'}
-                    </span>
-                  </div>
+                  {stepDefs.map((step, idx) => {
+                    const isLast = idx === stepDefs.length - 1;
+                    const StepIcon = step.icon;
+                    return (
+                      <div key={step.label} className="flex flex-col items-center relative z-10">
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                            step.lit
+                              ? isLast
+                                ? 'bg-emerald-500 text-white shadow-xs'
+                                : 'bg-amber-500 text-white shadow-xs'
+                              : 'bg-neutral-200 text-neutral-500'
+                          }`}
+                        >
+                          <StepIcon className="w-4 h-4" />
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold mt-1 ${
+                            step.lit ? 'text-neutral-800' : 'text-neutral-400'
+                          }`}
+                        >
+                          {step.label}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
 
-                <div className="text-center text-xs text-neutral-500 mt-2">
-                  {stepIndex === 1 && '后厨已打印菜票，正在排单洗菜切配...'}
-                  {stepIndex === 2 && '大厨正猛火现炒，色香味俱全即将出锅！'}
-                  {stepIndex === 3 &&
-                    (order?.order_type === '外卖'
-                      ? '餐品已妥善送达，祝您用餐愉快！'
-                      : '菜品已全部上齐，请慢用！如有需要请联系服务员。')}
-                </div>
+                <div className="text-center text-xs text-neutral-500 mt-2">{hint}</div>
               </div>
             ) : (
               <div className="bg-rose-50 text-rose-800 p-4 rounded-2xl border border-rose-200 text-center text-xs">
