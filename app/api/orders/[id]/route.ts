@@ -19,14 +19,21 @@ export async function GET(
       return NextResponse.json({ success: false, error: '未找到该订单' }, { status: 404 });
     }
 
-    // 接单员数据隔离：如果请求者是接单员，且该订单已被其他接单员处理，则无权查看
+    // 接单员数据隔离：后厨可查看全店订单；配送接单员仅能查看待接单或自己领取的订单
     const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
     if (staffPayload && staffPayload.tenantId === tenantId) {
-      if (order.status !== '待处理' && order.handler_phone && order.handler_phone !== staffPayload.phone) {
-        return NextResponse.json(
-          { success: false, error: '该订单已由其他接单员处理，您无权查看此订单' },
-          { status: 403 }
-        );
+      try {
+        const staff = await verifyStaffSession(staffPayload);
+        if (staff && staff.role !== 'kitchen') {
+          if (order.status !== '待处理' && order.handler_phone && order.handler_phone !== staffPayload.phone) {
+            return NextResponse.json(
+              { success: false, error: '该订单已由其他接单员处理，您无权查看此订单' },
+              { status: 403 }
+            );
+          }
+        }
+      } catch {
+        // 校验异常忽略
       }
     }
 
@@ -47,32 +54,53 @@ export async function PATCH(
     const tenantId = getTenantIdFromRequest(req);
     const { id } = await params;
     const body = await req.json();
-    const { status, paymentStatus } = body;
+    const { status, paymentStatus, kitchenStatus, deliveryStatus, riderId, riderName, riderPhone } = body;
 
-    // 若操作者为本租户接单员（staff会话），记录处理人信息并校验接单互斥排他性
-    let staffInfo: { id: number; name: string; phone: string } | null = null;
+    // 若操作者为本租户员工（staff会话），记录处理人信息及角色
+    let staffInfo: { id: number; name: string; phone: string; role?: string } | null = null;
     const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
     if (staffPayload && staffPayload.tenantId === tenantId) {
       try {
         const staff = await verifyStaffSession(staffPayload);
         if (staff) {
-          staffInfo = { id: staff.id, name: staff.name, phone: staff.phone };
+          staffInfo = { id: staff.id, name: staff.name, phone: staff.phone, role: staff.role };
         }
       } catch {
         // 校验异常按非 staff 处理
       }
     }
 
-    if (status) {
+    if (status || kitchenStatus || deliveryStatus) {
       const validStatuses = ['待处理', '制作中', '已完成', '已取消'];
-      if (!validStatuses.includes(status)) {
+      let targetStatus = status;
+
+      if (targetStatus && !validStatuses.includes(targetStatus)) {
         return NextResponse.json(
           { success: false, error: '无效的订单状态，允许状态：' + validStatuses.join('、') },
           { status: 400 }
         );
       }
 
-      const res = await updateOrderStatus(id, status, tenantId, staffInfo);
+      if (!targetStatus) {
+        // 未传主状态时按流转自动计算
+        if (deliveryStatus === '已送达') {
+          targetStatus = '已完成';
+        } else if (kitchenStatus === '已备齐') {
+          // 堂食无配送流程时直接完成；外卖进入待取/配送中
+          const currentOrder = await getOrderById(id, tenantId);
+          targetStatus = currentOrder?.order_type === '堂食' ? '已完成' : '制作中';
+        } else {
+          targetStatus = '制作中';
+        }
+      }
+
+      const res = await updateOrderStatus(id, targetStatus as any, tenantId, staffInfo, {
+        kitchenStatus,
+        deliveryStatus,
+        riderId,
+        riderName,
+        riderPhone,
+      });
       if (!res.success) {
         return NextResponse.json(
           { success: false, error: res.error || '更新订单状态失败' },

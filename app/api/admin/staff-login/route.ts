@@ -50,10 +50,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const isKitchen = staff.role === 'kitchen';
+    const welcomeMsg = isKitchen ? `欢迎进入后厨大屏，${staff.name}！` : `欢迎接单，${staff.name}！`;
     const response = NextResponse.json({
       success: true,
-      message: `欢迎接单，${staff.name}！`,
-      staff: { id: staff.id, tenantId: staff.tenant_id, name: staff.name, phone: staff.phone },
+      message: welcomeMsg,
+      staff: {
+        id: staff.id,
+        tenantId: staff.tenant_id,
+        name: staff.name,
+        phone: staff.phone,
+        role: staff.role || 'order_handler',
+      },
       tenant: resolvedTenant,
     });
 

@@ -475,6 +475,11 @@ export async function ensureDatabase(): Promise<Pool> {
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT DEFAULT '';
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS packing_fee DOUBLE PRECISION NOT NULL DEFAULT 0;
         ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee DOUBLE PRECISION NOT NULL DEFAULT 0;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS kitchen_status TEXT DEFAULT '待备餐';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_status TEXT DEFAULT '待接单';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS rider_id INTEGER;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS rider_name TEXT DEFAULT '';
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS rider_phone TEXT DEFAULT '';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
         ALTER TABLE order_items ADD COLUMN IF NOT EXISTS taste TEXT DEFAULT '';
         ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -1135,26 +1140,27 @@ export async function getStaffByTenant(tenantId = 'default'): Promise<StaffUserR
 
 export async function createStaffUser(
   tenantId: string,
-  data: { name: string; phone: string; password?: string }
+  data: { name: string; phone: string; password?: string; role?: string }
 ): Promise<StaffUserRecord> {
   const pool = await ensureDatabase();
   const name = (data.name || '').trim();
   const phone = (data.phone || '').trim();
   const password = (data.password || '').trim() || '123456';
-  if (!name) throw new Error('接单员姓名不能为空');
+  const role = data.role === 'kitchen' ? 'kitchen' : 'order_handler';
+  if (!name) throw new Error('员工姓名不能为空');
   if (!/^[0-9]{5,20}$/.test(phone)) throw new Error('请输入有效的手机号（5-20位数字）');
 
   const dup = await pool.query(
     'SELECT id FROM staff_users WHERE tenant_id = $1 AND phone = $2',
     [tenantId, phone]
   );
-  if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已是本店接单员，请勿重复添加`);
+  if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已是本店员工，请勿重复添加`);
 
   const res = await pool.query(
     `INSERT INTO staff_users (tenant_id, name, phone, password, role, enabled)
-     VALUES ($1, $2, $3, $4, 'order_handler', 1)
+     VALUES ($1, $2, $3, $4, $5, 1)
      RETURNING ${STAFF_COLS}`,
-    [tenantId, name, phone, password]
+    [tenantId, name, phone, password, role]
   );
   return formatRow<StaffUserRecord>(res.rows[0]);
 }
@@ -1162,7 +1168,7 @@ export async function createStaffUser(
 export async function updateStaffUser(
   tenantId: string,
   id: number,
-  patch: { name?: string; phone?: string; password?: string; enabled?: number }
+  patch: { name?: string; phone?: string; password?: string; enabled?: number; role?: string }
 ): Promise<StaffUserRecord | null> {
   const pool = await ensureDatabase();
   const exists = await pool.query(
@@ -1178,7 +1184,7 @@ export async function updateStaffUser(
       'SELECT id FROM staff_users WHERE tenant_id = $1 AND phone = $2 AND id != $3',
       [tenantId, phone, id]
     );
-    if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已被本店其他接单员使用`);
+    if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已被本店其他员工使用`);
   }
 
   const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
@@ -1195,6 +1201,11 @@ export async function updateStaffUser(
   if (patch.password !== undefined && patch.password.trim()) {
     updates.push(`password = $${i++}`);
     values.push(patch.password.trim());
+  }
+  if (patch.role !== undefined) {
+    const cleanRole = patch.role === 'kitchen' ? 'kitchen' : 'order_handler';
+    updates.push(`role = $${i++}`);
+    values.push(cleanRole);
   }
   if (patch.enabled !== undefined) {
     updates.push(`enabled = $${i++}`);
@@ -1974,20 +1985,25 @@ export async function getAllOrders(
   filterStatus?: string,
   search?: string,
   tenantId = 'default',
-  staffUser?: { id?: number; phone?: string } | null
+  staffUser?: { id?: number; phone?: string; role?: string } | null
 ): Promise<Order[]> {
   const pool = await ensureDatabase();
   let sql = 'SELECT * FROM orders WHERE tenant_id = $1';
   const params: any[] = [tenantId];
   let paramIdx = 2;
 
-  // 接单员数据隔离：
-  // 面对配置了多个接单员的租户，所有接单员均可实时查看【待处理】公共新订单并触发声音/语音提醒；
-  // 只要有其中一个接单员接单处理了该订单，其他接单员立即不再显示该订单（包括后续制作中、已完成、已取消等）；
-  // 实现了多接单员工作流的完全数据隔离与专人负责制。管理员（非 staff）保持查看该租户全量订单
+  // 员工数据隔离：
+  // 1. 后厨角色（kitchen）：查看全店需要备餐制作与出餐的订单，确保后厨对全店菜品制作统揽。
+  // 2. 接单/配送员角色（order_handler）：查看【待处理/待接单】公共新订单，以及本人已认领/配送中的订单。
+  // 3. 管理员（非 staff）：查看该租户全量订单。
   if (staffUser?.phone) {
-    sql += ` AND (status = '待处理' OR handler_phone = $${paramIdx++})`;
-    params.push(staffUser.phone);
+    if (staffUser.role === 'kitchen') {
+      // 后厨角色不按手机号过滤，能够看到本店全部备餐订单
+    } else {
+      sql += ` AND (status = '待处理' OR handler_phone = $${paramIdx} OR rider_phone = $${paramIdx})`;
+      params.push(staffUser.phone);
+      paramIdx++;
+    }
   }
 
   if (filterStatus && filterStatus !== '全部') {
@@ -2057,7 +2073,14 @@ export async function updateOrderStatus(
   id: string,
   status: '待处理' | '制作中' | '已完成' | '已取消',
   tenantId?: string,
-  staffInfo?: { id?: number; name?: string; phone?: string } | null | string
+  staffInfo?: { id?: number; name?: string; phone?: string; role?: string } | null | string,
+  extra?: {
+    kitchenStatus?: string;
+    deliveryStatus?: string;
+    riderId?: number;
+    riderName?: string;
+    riderPhone?: string;
+  }
 ): Promise<{ success: boolean; error?: string }> {
   const pool = await ensureDatabase();
   const order = await getOrderById(id, tenantId);
@@ -2070,6 +2093,7 @@ export async function updateOrderStatus(
   let handlerPhone = '';
   let handlerId: number | null = null;
   let isStaff = false;
+  let isKitchen = false;
 
   if (typeof staffInfo === 'string') {
     handlerName = staffInfo.trim();
@@ -2078,10 +2102,33 @@ export async function updateOrderStatus(
     handlerPhone = (staffInfo.phone || '').trim();
     handlerId = staffInfo.id || null;
     isStaff = true;
+    isKitchen = staffInfo.role === 'kitchen';
   }
 
-  if (isStaff && handlerPhone) {
-    // 竞态排他校验：接单员只允许处理公共【待处理】订单（认领并流转），或继续处理本人已接单的订单
+  // 计算后厨备餐状态
+  const newKitchenStatus =
+    extra?.kitchenStatus ||
+    (status === '已完成' ? '已备齐' : status === '制作中' ? '制作中' : '待备餐');
+
+  // 计算配送流转状态
+  const newDeliveryStatus =
+    extra?.deliveryStatus ||
+    (status === '已完成' ? '已送达' : status === '制作中' ? (order.delivery_status || '待接单') : '待接单');
+
+  const riderName = extra?.riderName !== undefined ? extra.riderName : (!isKitchen && isStaff ? handlerName : (order.rider_name || ''));
+  const riderPhone = extra?.riderPhone !== undefined ? extra.riderPhone : (!isKitchen && isStaff ? handlerPhone : (order.rider_phone || ''));
+  const riderId = extra?.riderId !== undefined ? extra.riderId : (!isKitchen && isStaff ? handlerId : (order.rider_id || null));
+
+  if (isKitchen) {
+    // 🍳 后厨操作：只更新订单制作状态与后厨备餐状态，不抢占配送员身份与锁
+    await pool.query(
+      `UPDATE orders
+       SET status = $1, updated_at = $2, kitchen_status = $3
+       WHERE id = $4 AND tenant_id = $5`,
+      [status, nowIso, newKitchenStatus, id, currentTenant]
+    );
+  } else if (isStaff && handlerPhone) {
+    // 🛵 接单/配送员操作：竞态排他校验
     if (order.handler_phone && order.handler_phone !== handlerPhone) {
       return {
         success: false,
@@ -2095,15 +2142,27 @@ export async function updateOrderStatus(
       };
     }
 
-    // 数据库级原子抢单与状态流转更新：
-    // WHERE 条件强制保障只有待处理或者本人已经认领的记录才能被修改
     const updateRes = await pool.query(
       `UPDATE orders
-       SET status = $1, updated_at = $2, handler_name = $3, handler_phone = $4, handler_id = $5
-       WHERE id = $6 AND tenant_id = $7
+       SET status = $1, updated_at = $2, handler_name = $3, handler_phone = $4, handler_id = $5,
+           kitchen_status = $6, delivery_status = $7, rider_name = $8, rider_phone = $9, rider_id = $10
+       WHERE id = $11 AND tenant_id = $12
          AND (status = '待处理' OR handler_phone = $4)
        RETURNING id`,
-      [status, nowIso, handlerName, handlerPhone, handlerId, id, currentTenant]
+      [
+        status,
+        nowIso,
+        handlerName,
+        handlerPhone,
+        handlerId,
+        newKitchenStatus,
+        newDeliveryStatus,
+        riderName,
+        riderPhone,
+        riderId,
+        id,
+        currentTenant,
+      ]
     );
 
     if (updateRes.rows.length === 0) {
@@ -2114,18 +2173,14 @@ export async function updateOrderStatus(
       };
     }
   } else {
-    // 管理员操作：保留最高监管处置权
-    if (handlerName) {
-      await pool.query(
-        'UPDATE orders SET status = $1, updated_at = $2, handler_name = $3 WHERE id = $4 AND tenant_id = $5',
-        [status, nowIso, handlerName, id, currentTenant]
-      );
-    } else {
-      await pool.query(
-        'UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3 AND tenant_id = $4',
-        [status, nowIso, id, currentTenant]
-      );
-    }
+    // 👑 管理员操作：保留最高监管处置权
+    await pool.query(
+      `UPDATE orders
+       SET status = $1, updated_at = $2,
+           kitchen_status = $3, delivery_status = $4
+       WHERE id = $5 AND tenant_id = $6`,
+      [status, nowIso, newKitchenStatus, newDeliveryStatus, id, currentTenant]
+    );
   }
 
   if (status === '已完成' || status === '已取消') {

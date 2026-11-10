@@ -32,15 +32,18 @@ export async function POST(req: NextRequest) {
     }
     const tenantId = getTenantIdFromRequest(req);
     const body = await req.json();
+    const role = body?.role === 'kitchen' ? 'kitchen' : 'order_handler';
     const staff = await createStaffUser(tenantId, {
       name: String(body?.name || ''),
       phone: String(body?.phone || ''),
       password: body?.password !== undefined ? String(body.password) : undefined,
+      role,
     });
+    const roleLabel = staff.role === 'kitchen' ? '后厨备餐员' : '接单配送员';
     return NextResponse.json({
       success: true,
       data: staff,
-      message: `接单员「${staff.name}」已添加，可用手机号 ${staff.phone} 登录本店后台接单`,
+      message: `员工「${staff.name}」已添加（${roleLabel}），可用手机号 ${staff.phone} 登录后台`,
     });
   } catch (error: any) {
     return NextResponse.json(

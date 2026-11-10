@@ -7,3 +7,4 @@ export { default as SettingsManagement } from './SettingsManagement';
 export { default as StoreManagement } from './StoreManagement';
 export { default as TenantManagement } from './TenantManagement';
 export { default as LLMManagement } from './LLMManagement';
+export { default as KitchenDisplayView } from './KitchenDisplayView';

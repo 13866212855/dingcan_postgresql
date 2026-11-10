@@ -15,14 +15,14 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status') || undefined;
     const search = searchParams.get('search') || undefined;
 
-    // 识别当前请求是否来自本租户接单员（staff会话），执行多接单员数据隔离
-    let staffUser: { id: number; phone: string } | null = null;
+    // 识别当前请求是否来自本租户员工（staff会话），执行角色隔离（后厨全览 vs 配送员抢单）
+    let staffUser: { id: number; phone: string; role?: string } | null = null;
     const staffPayload = decodeStaffSession(req.cookies.get(STAFF_AUTH_COOKIE)?.value);
     if (staffPayload && staffPayload.tenantId === tenantId) {
       try {
         const staff = await verifyStaffSession(staffPayload);
         if (staff) {
-          staffUser = { id: staff.id, phone: staff.phone };
+          staffUser = { id: staff.id, phone: staff.phone, role: staff.role };
         }
       } catch {
         // 校验异常不阻断

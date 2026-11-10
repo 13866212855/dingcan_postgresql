@@ -61,6 +61,11 @@ export interface Order {
   handler_name?: string; // 处理该订单的接单员姓名（staff 处理留痕）
   handler_phone?: string; // 处理该订单的接单员手机号（用于多接单员数据隔离）
   handler_id?: number; // 处理该订单的接单员ID
+  kitchen_status?: '待备餐' | '制作中' | '已备齐' | string; // 后厨备餐状态
+  delivery_status?: '待接单' | '已接单' | '提货中' | '配送中' | '已送达' | string; // 配送流转状态
+  rider_id?: number; // 接单配送员ID
+  rider_name?: string; // 接单配送员姓名
+  rider_phone?: string; // 接单配送员手机号
   notes: string;
   user_id?: string;
   created_at: string;
@@ -103,7 +108,7 @@ export interface StaffUser {
   tenant_id?: string;
   name: string;
   phone: string;
-  role: string; // 'order_handler' = 接单员
+  role: 'order_handler' | 'kitchen' | 'admin' | string; // 'order_handler'=接单配送员, 'kitchen'=后厨备餐员, 'admin'=管理员
   enabled: number; // 1=启用, 0=停用
   created_at?: string;
   updated_at?: string;

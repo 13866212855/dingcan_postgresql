@@ -34,6 +34,8 @@ import {
   Brain,
   CloudDownload,
   UserCog,
+  Bike,
+  Zap,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
@@ -44,10 +46,12 @@ import SettingsManagement from '@/components/admin/SettingsManagement';
 import StoreManagement from '@/components/admin/StoreManagement';
 import TenantManagement from '@/components/admin/TenantManagement';
 import LLMManagement from '@/components/admin/LLMManagement';
+import KitchenDisplayView from '@/components/admin/KitchenDisplayView';
 import { Dish, Order, Tenant, StaffUser } from '@/types';
 import { safeSetItem, safeRemoveItem } from '@/lib/storage';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
 import { parseJsonResponse } from '@/lib/utils';
+import { classifyOrderDishes, isReadyMadeDish } from '@/lib/dishClassifier';
 
 export default function AdminPage() {
   // Auth state（方案二：单一智能登录表单——身份由账号形态自动识别：纯数字=接单员手机号，其他=管理员账号。
@@ -58,9 +62,17 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // 接单员（order_handler）会话（mymultenant Tier 3 角色）
-  const [staffInfo, setStaffInfo] = useState<{ id: number; tenantId: string; name: string; phone: string } | null>(null);
+  // 店员会话（后厨备餐员 kitchen 或 接单配送员 order_handler）
+  const [staffInfo, setStaffInfo] = useState<{
+    id: number;
+    tenantId: string;
+    name: string;
+    phone: string;
+    role?: string;
+  } | null>(null);
   const isStaffMode = staffInfo !== null;
+  const isKitchenStaff = staffInfo?.role === 'kitchen';
+  const isRiderStaff = isStaffMode && !isKitchenStaff;
 
   // 管理员身份范围（scope）：登录时所在租户。
   // 'default' = 在总店后台 /admin 登录的超级管理员 → 独享跨租户订单删除权；
@@ -122,14 +134,19 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Active Admin Tab: 'orders' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
+  // Active Admin Tab: 'orders' | 'kitchen' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
   const [activeTabState, setActiveTabState] = useState<
-    'orders' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
+    'orders' | 'kitchen' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
   >('orders');
 
-  // 权限裁剪（派生保证永不越权）：接单员永远锁定订单中心；子分店后台永远进不了"连锁分店"管理Tab
-  const activeTab =
-    isStaffMode || (!isMasterAdmin && activeTabState === 'tenants') ? 'orders' : activeTabState;
+  // 权限裁剪：后厨员工默认且仅能访问后厨大屏与订单中心；配送接单员锁定订单中心；子分店后台永远进不了"连锁分店"管理Tab
+  const activeTab = isKitchenStaff
+    ? (activeTabState === 'orders' ? 'orders' : 'kitchen')
+    : isRiderStaff
+    ? 'orders'
+    : (!isMasterAdmin && activeTabState === 'tenants')
+    ? 'orders'
+    : activeTabState;
   const setActiveTab = setActiveTabState;
 
   // Orders State
@@ -216,11 +233,14 @@ export default function AdminPage() {
         if (!isCancelled) {
           if (data?.authenticated) {
             if (data.role === 'staff' && data.staff) {
-              // 接单员会话：仅当其所属租户与当前后台租户一致时才放行（跨租户URL显示登录页）
+              // 员工会话：仅当其所属租户与当前后台租户一致时才放行（跨租户URL显示登录页）
               if (data.staff.tenantId === currentTenantId) {
                 setStaffInfo(data.staff);
                 setAdminScope('');
                 setIsAuthenticated(true);
+                if (data.staff.role === 'kitchen') {
+                  setActiveTabState('kitchen');
+                }
               } else {
                 setStaffInfo(null);
                 setAdminScope('');
@@ -499,7 +519,11 @@ export default function AdminPage() {
           setStaffInfo(data.staff);
           setAdminScope('');
           setIsAuthenticated(true);
-          setActiveTab('orders');
+          if (data.staff.role === 'kitchen') {
+            setActiveTab('kitchen');
+          } else {
+            setActiveTab('orders');
+          }
           setLoginPass('');
           // 租户上下文自愈：以接单员真实所属门店为准（URL 误带错误 tenant= 参数时自动纠正）
           if (data.staff.tenantId && data.staff.tenantId !== currentTenantId) {
@@ -606,6 +630,55 @@ export default function AdminPage() {
       alert('操作失败: ' + (err?.message || '网络连接异常'));
       fetchOrders(true);
     }
+  };
+
+  // 灵活流转订单（后厨制作、常备一键出餐、骑手接单/提货/送达）
+  const handleUpdateOrderWorkflow = async (
+    orderId: string,
+    patch: {
+      status?: '待处理' | '制作中' | '已完成' | '已取消';
+      kitchenStatus?: string;
+      deliveryStatus?: string;
+      riderId?: number;
+      riderName?: string;
+      riderPhone?: string;
+    }
+  ) => {
+    try {
+      const res = await fetch(`/api/orders/${orderId}?tenant=${encodeURIComponent(currentTenantId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...patch, tenantId: currentTenantId }),
+      });
+      const data = await parseJsonResponse<any>(res, { success: false });
+      if (data.success) {
+        fetchOrders(true);
+        if (selectedOrderDetail && selectedOrderDetail.id === orderId) {
+          setSelectedOrderDetail({
+            ...selectedOrderDetail,
+            ...(patch.status ? { status: patch.status } : {}),
+            ...(patch.kitchenStatus ? { kitchen_status: patch.kitchenStatus } : {}),
+            ...(patch.deliveryStatus ? { delivery_status: patch.deliveryStatus } : {}),
+          });
+        }
+      } else {
+        alert(data.error || '更新失败');
+        fetchOrders(true);
+      }
+    } catch (err: any) {
+      alert('操作失败: ' + (err?.message || '网络连接异常'));
+      fetchOrders(true);
+    }
+  };
+
+  // ⚡ 现成菜品一键齐餐出餐（堂食直接完成，外卖齐餐待配送）
+  const handleFastPrepOrder = async (order: Order) => {
+    const isDelivery = order.order_type === '外卖';
+    const targetStatus = isDelivery ? '制作中' : '已完成';
+    await handleUpdateOrderWorkflow(order.id, {
+      status: targetStatus,
+      kitchenStatus: '已备齐',
+    });
   };
 
   // Toggle Payment Status
@@ -985,11 +1058,23 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {/* 接单员身份徽标：一眼可见当前登录的是本店接单员 */}
+                {/* 员工身份徽标：一眼可见当前登录的是后厨备餐员或接单配送员 */}
                 {isStaffMode && staffInfo && (
-                  <div className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-indigo-500/25 border border-indigo-400/50 text-indigo-200 text-[11px] font-bold">
-                    <UserCog className="w-3 h-3 text-indigo-300" />
-                    <span>接单员 · {staffInfo.name}</span>
+                  <div
+                    className={`flex items-center space-x-1 px-2.5 py-0.5 rounded-full border text-[11px] font-bold ${
+                      isKitchenStaff
+                        ? 'bg-amber-500/25 border-amber-400/50 text-amber-200'
+                        : 'bg-indigo-500/25 border-indigo-400/50 text-indigo-200'
+                    }`}
+                  >
+                    {isKitchenStaff ? (
+                      <ChefHat className="w-3 h-3 text-amber-300" />
+                    ) : (
+                      <Bike className="w-3 h-3 text-sky-300" />
+                    )}
+                    <span>
+                      {isKitchenStaff ? '后厨备餐员' : '接单配送员'} · {staffInfo.name}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1004,7 +1089,7 @@ export default function AdminPage() {
             <button
               id="tab-orders"
               onClick={() => setActiveTab('orders')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'orders'
                   ? 'bg-amber-500 text-white shadow-xs'
                   : 'text-neutral-300 hover:text-white'
@@ -1018,6 +1103,27 @@ export default function AdminPage() {
                 </span>
               )}
             </button>
+
+            {/* 后厨备餐大屏Tab（店长与后厨角色均可进入） */}
+            {(!isStaffMode || isKitchenStaff) && (
+              <button
+                id="tab-kitchen"
+                onClick={() => setActiveTab('kitchen')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'kitchen'
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <ChefHat className="w-3.5 h-3.5 text-amber-400" />
+                <span>后厨备餐</span>
+                {stats.pending + stats.cooking > 0 && (
+                  <span className="bg-orange-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+                    {stats.pending + stats.cooking}
+                  </span>
+                )}
+              </button>
+            )}
 
             {!isStaffMode && (
               <button
@@ -1077,7 +1183,7 @@ export default function AdminPage() {
                 }`}
               >
                 <UserCog className="w-3.5 h-3.5 text-indigo-400" />
-                <span>接单员</span>
+                <span>店员配置</span>
               </button>
             )}
 
@@ -1206,14 +1312,20 @@ export default function AdminPage() {
 
         {/* Mobile Navigation Tabs */}
         <div className="flex md:hidden overflow-x-auto px-2 py-2 bg-neutral-800/90 border-t border-neutral-700 space-x-1">
-          {(isStaffMode
-            ? [{ id: 'orders', label: '本店订单', icon: ClipboardList }]
+          {(isKitchenStaff
+            ? [
+                { id: 'kitchen', label: '后厨备餐', icon: ChefHat },
+                { id: 'orders', label: '订单明细', icon: ClipboardList },
+              ]
+            : isRiderStaff
+            ? [{ id: 'orders', label: '外卖接单配送', icon: Bike }]
             : [
                 { id: 'orders', label: '订单中心', icon: ClipboardList },
+                { id: 'kitchen', label: '后厨备餐', icon: ChefHat },
                 { id: 'dishes', label: '菜品库', icon: Utensils },
                 { id: 'tables', label: '餐桌管理', icon: MapPin },
                 { id: 'members', label: '会员积分', icon: Users },
-                { id: 'staff', label: '接单员', icon: UserCog },
+                { id: 'staff', label: '店员配置', icon: UserCog },
                 { id: 'store', label: '店面品牌', icon: Store },
                 ...(isMasterAdmin ? [{ id: 'tenants', label: '连锁门店', icon: Building2 }] : []),
                 { id: 'settings', label: '收款配置', icon: Settings },
@@ -1414,6 +1526,12 @@ export default function AdminPage() {
                   const isCancelled = order.status === '已取消';
                   const isPaid = order.payment_status === '已支付';
                   const isDelivery = order.order_type === '外卖';
+                  const { hasCooking, allReadyMade } = classifyOrderDishes(order.items);
+                  const kitchenStatus =
+                    order.kitchen_status ||
+                    (isDone ? '已备齐' : isCooking ? '制作中' : '待备餐');
+                  const deliveryStatus =
+                    order.delivery_status || (isDone ? '已送达' : '待接单');
 
                   return (
                     <div
@@ -1421,6 +1539,8 @@ export default function AdminPage() {
                       className={`bg-white rounded-2xl border transition-all shadow-2xs flex flex-col justify-between overflow-hidden ${
                         isPending
                           ? 'border-amber-400 ring-2 ring-amber-100'
+                          : isCooking
+                          ? 'border-sky-300 ring-1 ring-sky-100'
                           : 'border-neutral-200/80 hover:shadow-xs'
                       }`}
                     >
@@ -1456,11 +1576,24 @@ export default function AdminPage() {
                               {order.status}
                             </span>
 
+                            {/* 菜品特征标记：现成装配 vs 现炒 */}
+                            {allReadyMade ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-black bg-blue-100 text-blue-800 border border-blue-200 flex items-center space-x-1">
+                                <Zap className="w-3 h-3 text-blue-600" />
+                                <span>⚡ 全现成常备单</span>
+                              </span>
+                            ) : hasCooking ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-orange-100 text-orange-800 border border-orange-200 flex items-center space-x-1">
+                                <ChefHat className="w-3 h-3 text-orange-600" />
+                                <span>🔥 含现炒制作</span>
+                              </span>
+                            ) : null}
+
                             {/* Payment status badge with toggle */}
                             <button
                               onClick={() => handleTogglePaymentStatus(order.id, order.payment_status)}
                               title="点击可直接切换收款状态"
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-transform active:scale-95 ${
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-transform active:scale-95 cursor-pointer ${
                                 isPaid
                                   ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                                   : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
@@ -1468,13 +1601,45 @@ export default function AdminPage() {
                             >
                               {isPaid ? '✓ 已收款' : '✕ 未收款'}
                             </button>
+                          </div>
 
-                            {/* 接单员处理留痕徽标 */}
-                            {order.handler_name && (
+                          {/* 状态徽标行：后厨备餐状态 + 骑手配送状态 */}
+                          <div className="flex items-center space-x-2 mt-1.5 flex-wrap gap-y-1">
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-md font-bold border flex items-center space-x-1 ${
+                                kitchenStatus === '已备齐'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : kitchenStatus === '制作中'
+                                  ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse'
+                                  : 'bg-neutral-100 text-neutral-600 border-neutral-200'
+                              }`}
+                            >
+                              <ChefHat className="w-3 h-3" />
+                              <span>后厨:{kitchenStatus}</span>
+                            </span>
+
+                            {isDelivery && (
                               <span
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold"
-                                title="该订单由本店接单员处理"
+                                className={`text-[10px] px-2 py-0.5 rounded-md font-bold border flex items-center space-x-1 ${
+                                  deliveryStatus === '已送达'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : deliveryStatus === '配送中'
+                                    ? 'bg-sky-50 text-sky-800 border-sky-300 animate-pulse'
+                                    : deliveryStatus === '已接单'
+                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                    : 'bg-neutral-100 text-neutral-500 border-neutral-200'
+                                }`}
                               >
+                                <Bike className="w-3 h-3" />
+                                <span>
+                                  配送:
+                                  {order.rider_name ? `${order.rider_name} (${deliveryStatus})` : deliveryStatus}
+                                </span>
+                              </span>
+                            )}
+
+                            {order.handler_name && !order.rider_name && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold">
                                 接单:{order.handler_name}
                               </span>
                             )}
@@ -1486,7 +1651,7 @@ export default function AdminPage() {
                         </div>
 
                         <div className="text-right">
-                          <div className="text-xs text-neutral-500 flex items-center space-x-1">
+                          <div className="text-xs text-neutral-500 flex items-center space-x-1 justify-end">
                             <Calendar className="w-3 h-3" />
                             <span>
                               {new Date(order.created_at).toLocaleTimeString('zh-CN', {
@@ -1547,24 +1712,34 @@ export default function AdminPage() {
                           </span>
                         </div>
                         <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                          {order.items?.map((item, idx) => (
-                            <div key={idx} className="flex items-center justify-between py-0.5">
-                              <div className="flex items-center flex-wrap gap-1">
-                                <span className="text-neutral-800 font-medium">
-                                  {item.dish_name}
-                                </span>
-                                {item.taste && (
-                                  <span className="px-1.5 py-0.2 bg-amber-100 text-amber-900 rounded text-[10px] font-semibold border border-amber-300">
-                                    {item.taste}
+                          {order.items?.map((item, idx) => {
+                            const isReady = isReadyMadeDish(item.dish_name);
+                            return (
+                              <div key={idx} className="flex items-center justify-between py-0.5">
+                                <div className="flex items-center flex-wrap gap-1">
+                                  <span
+                                    className={`text-[9px] px-1 py-0.2 rounded font-bold ${
+                                      isReady ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                                    }`}
+                                  >
+                                    {isReady ? '⚡现成' : '🔥现炒'}
                                   </span>
-                                )}
+                                  <span className="text-neutral-800 font-medium">
+                                    {item.dish_name}
+                                  </span>
+                                  {item.taste && (
+                                    <span className="px-1.5 py-0.2 bg-amber-100 text-amber-900 rounded text-[10px] font-semibold border border-amber-300">
+                                      {item.taste}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center space-x-2 text-neutral-500">
+                                  <span className="font-bold text-amber-600">x{item.quantity}</span>
+                                  <span className="w-12 text-right">¥{item.subtotal.toFixed(1)}</span>
+                                </div>
                               </div>
-                              <div className="flex items-center space-x-2 text-neutral-500">
-                                <span className="font-bold text-amber-600">x{item.quantity}</span>
-                                <span className="w-12 text-right">¥{item.subtotal.toFixed(1)}</span>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         {/* Customer Notes */}
@@ -1577,34 +1752,101 @@ export default function AdminPage() {
                       </div>
 
                       {/* Actions Footer */}
-                      <div className="p-3 bg-neutral-50 border-t border-neutral-100 flex items-center justify-between gap-2">
+                      <div className="p-3 bg-neutral-50 border-t border-neutral-100 flex items-center justify-between gap-2 flex-wrap">
                         <button
                           onClick={() => setSelectedOrderDetail(order)}
-                          className="px-2.5 py-1.5 rounded-lg text-xs text-neutral-600 hover:bg-neutral-200 transition-colors flex items-center space-x-1"
+                          className="px-2.5 py-1.5 rounded-lg text-xs text-neutral-600 hover:bg-neutral-200 transition-colors flex items-center space-x-1 cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>明细</span>
                         </button>
 
-                        <div className="flex items-center space-x-1.5">
-                          {isPending && (
+                        <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                          {/* 全单现成菜品：提供【⚡ 一键出餐】快速按钮 */}
+                          {allReadyMade && (isPending || isCooking) && kitchenStatus !== '已备齐' && (
                             <button
-                              onClick={() => handleUpdateOrderStatus(order.id, '制作中')}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1"
+                              onClick={() => handleFastPrepOrder(order)}
+                              className="px-2.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                              title="全单皆为现成常备菜，直接一键齐餐出餐"
                             >
-                              <ChefHat className="w-3.5 h-3.5" />
-                              <span>接单制作</span>
+                              <Zap className="w-3.5 h-3.5 text-amber-300" />
+                              <span>⚡ 一键齐餐</span>
                             </button>
                           )}
 
-                          {isCooking && (
-                            <button
-                              onClick={() => handleUpdateOrderStatus(order.id, '已完成')}
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>出餐完成</span>
-                            </button>
+                          {/* 外卖配送流水线按钮 */}
+                          {isDelivery ? (
+                            <>
+                              {deliveryStatus === '待接单' && !isDone && (
+                                <button
+                                  onClick={() =>
+                                    handleUpdateOrderWorkflow(order.id, {
+                                      status: '制作中',
+                                      deliveryStatus: '已接单',
+                                    })
+                                  }
+                                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                                >
+                                  <Bike className="w-3.5 h-3.5" />
+                                  <span>我要接单送餐</span>
+                                </button>
+                              )}
+
+                              {deliveryStatus === '已接单' && (
+                                <button
+                                  onClick={() =>
+                                    handleUpdateOrderWorkflow(order.id, { deliveryStatus: '配送中' })
+                                  }
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                                  title={
+                                    kitchenStatus !== '已备齐'
+                                      ? '提醒：后厨尚未标记齐餐，如菜已打包好可直接取货'
+                                      : '后厨已出餐备齐，点击开始送货'
+                                  }
+                                >
+                                  <Bike className="w-3.5 h-3.5" />
+                                  <span>提到货·去送货</span>
+                                </button>
+                              )}
+
+                              {deliveryStatus === '配送中' && (
+                                <button
+                                  onClick={() =>
+                                    handleUpdateOrderWorkflow(order.id, {
+                                      status: '已完成',
+                                      deliveryStatus: '已送达',
+                                    })
+                                  }
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>送达完成</span>
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            /* 堂食标准流水线 */
+                            <>
+                              {isPending && (
+                                <button
+                                  onClick={() => handleUpdateOrderStatus(order.id, '制作中')}
+                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                                >
+                                  <ChefHat className="w-3.5 h-3.5" />
+                                  <span>接单制作</span>
+                                </button>
+                              )}
+
+                              {isCooking && (
+                                <button
+                                  onClick={() => handleUpdateOrderStatus(order.id, '已完成')}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>出餐完成</span>
+                                </button>
+                              )}
+                            </>
                           )}
 
                           {!isDone && !isCancelled && (
@@ -1614,7 +1856,7 @@ export default function AdminPage() {
                                   handleUpdateOrderStatus(order.id, '已取消');
                                 }
                               }}
-                              className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                               title="取消订单"
                             >
                               <XCircle className="w-4 h-4" />
@@ -1625,7 +1867,7 @@ export default function AdminPage() {
                           {canDeleteOrders && (
                             <button
                               onClick={() => handleDeleteOrder(order)}
-                              className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                               title="彻底删除此订单（主租户特权，不可恢复）"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1639,6 +1881,9 @@ export default function AdminPage() {
               </div>
             )}
           </div>
+        ) : activeTab === 'kitchen' ? (
+          /* ================= KITCHEN DISPLAY SYSTEM MODULE ================= */
+          <KitchenDisplayView tenantId={currentTenantId} isStaffKitchen={isKitchenStaff} />
         ) : activeTab === 'dishes' ? (
           /* ================= DISH MANAGEMENT MODULE ================= */
           <div className="space-y-4">
@@ -1948,13 +2193,27 @@ export default function AdminPage() {
             </div>
 
             <div className="p-5 flex-1 overflow-y-auto space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div className="bg-amber-50 p-3 rounded-xl border border-amber-200">
-                  <span className="text-[11px] text-amber-800 font-medium block">厨房出单状态</span>
+                  <span className="text-[11px] text-amber-800 font-medium block">后厨备餐状态</span>
                   <span className="font-bold text-amber-900 text-sm mt-0.5 inline-block">
-                    {selectedOrderDetail.status}
+                    🍳 {selectedOrderDetail.kitchen_status || (selectedOrderDetail.status === '已完成' ? '已备齐' : '制作中')}
                   </span>
                 </div>
+
+                {selectedOrderDetail.order_type === '外卖' && (
+                  <div className="bg-sky-50 p-3 rounded-xl border border-sky-200">
+                    <span className="text-[11px] text-sky-800 font-medium block">外卖配送流转</span>
+                    <span className="font-bold text-sky-900 text-sm mt-0.5 inline-block">
+                      🛵 {selectedOrderDetail.delivery_status || '待接单'}
+                    </span>
+                    {selectedOrderDetail.rider_name && (
+                      <div className="text-[10px] text-sky-700 font-bold mt-0.5">
+                        骑手: {selectedOrderDetail.rider_name}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200 flex flex-col justify-between">
                   <span className="text-[11px] text-emerald-800 font-medium block">收款状态</span>
@@ -1969,7 +2228,7 @@ export default function AdminPage() {
                           selectedOrderDetail.payment_status
                         )
                       }
-                      className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold transition-colors"
+                      className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold transition-colors cursor-pointer"
                     >
                       切换
                     </button>

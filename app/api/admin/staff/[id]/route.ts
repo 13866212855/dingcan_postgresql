@@ -29,11 +29,12 @@ export async function PUT(
       phone: body?.phone !== undefined ? String(body.phone) : undefined,
       password: body?.password !== undefined ? String(body.password) : undefined,
       enabled: body?.enabled !== undefined ? Number(body.enabled) : undefined,
+      role: body?.role !== undefined ? String(body.role) : undefined,
     });
     if (!updated) {
-      return NextResponse.json({ success: false, error: '接单员不存在' }, { status: 404 });
+      return NextResponse.json({ success: false, error: '员工不存在' }, { status: 404 });
     }
-    return NextResponse.json({ success: true, data: updated, message: '接单员信息已更新' });
+    return NextResponse.json({ success: true, data: updated, message: '员工信息已更新' });
   } catch (error: any) {
     return NextResponse.json(
       { success: false, error: error?.message || '更新接单员失败' },
