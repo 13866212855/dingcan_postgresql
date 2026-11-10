@@ -1999,18 +1999,26 @@ export async function getAllOrders(
   const params: any[] = [tenantId];
   let paramIdx = 2;
 
-  // 员工数据隔离：
+  // 员工数据隔离（方案B·状态机解耦 2026-11-10）：
   // 1. 后厨角色（kitchen）：查看全店需要备餐制作与出餐的订单，确保后厨对全店菜品制作统揽。
-  // 2. 接单/配送员角色（order_handler）：查看【待处理/待接单】公共新订单，以及本人已认领/配送中的订单。
+  // 2. 接单/配送员角色（order_handler）：可见集 = 无主的活动单（未被认领且未完成/未取消——
+  //    后厨开火制作/齐餐等任何烹饪动作不再影响配送侧可见性）+ 本人已认领/配送中的单。
   // 3. 管理员（非 staff）：查看该租户全量订单。
   if (staffUser?.phone) {
     if (staffUser.role === 'kitchen') {
       // 后厨角色不按手机号过滤，能够看到本店全部备餐订单
     } else {
-      sql += ` AND (status = '待处理' OR handler_phone = $${paramIdx} OR rider_phone = $${paramIdx})`;
+      sql += ` AND ((COALESCE(handler_phone,'') = '' AND status NOT IN ('已完成','已取消')) OR handler_phone = $${paramIdx} OR rider_phone = $${paramIdx})`;
       params.push(staffUser.phone);
       paramIdx++;
     }
+  }
+
+  // 排序：接单员视图把「已备齐且无主」的单置顶（做好了等取的单优先级天然最高），其余视图按创建时间倒序
+  let orderClause = ' ORDER BY created_at DESC';
+  if (staffUser?.phone && staffUser.role !== 'kitchen') {
+    orderClause =
+      " ORDER BY (kitchen_status = '已备齐' AND COALESCE(handler_phone,'') = '') DESC, created_at DESC";
   }
 
   if (filterStatus && filterStatus !== '全部') {
@@ -2025,7 +2033,7 @@ export async function getAllOrders(
     paramIdx++;
   }
 
-  sql += ' ORDER BY created_at DESC';
+  sql += orderClause;
 
   const result = await pool.query(sql, params);
   if (result.rows.length === 0) return [];
@@ -2142,10 +2150,15 @@ export async function updateOrderStatus(
         error: `手慢了！该订单已被接单员【${order.handler_name || '其他同事'}】接单处理，您无法处理同一订单。`,
       };
     }
-    if (order.status !== '待处理' && order.handler_phone !== handlerPhone) {
+    // 方案B·状态机解耦（2026-11-10）：认领资格 = 无主的活动单（含后厨已开火/已齐餐的制作中单——
+    // 烹饪动作不再剥夺配送侧认领权）或本人已认领的单；已完成/已取消的单不可认领
+    const claimedByMe = (order.handler_phone || '') === handlerPhone;
+    const isUnclaimedActive =
+      !(order.handler_phone || '') && order.status !== '已完成' && order.status !== '已取消';
+    if (!claimedByMe && !isUnclaimedActive) {
       return {
         success: false,
-        error: `该订单已由其他接单员处理（当前状态：${order.status}），您无法处理。`,
+        error: `该订单当前不可接单（当前状态：${order.status}），您无法处理。`,
       };
     }
 
@@ -2154,7 +2167,7 @@ export async function updateOrderStatus(
        SET status = $1, updated_at = $2, handler_name = $3, handler_phone = $4, handler_id = $5,
            kitchen_status = $6, delivery_status = $7, rider_name = $8, rider_phone = $9, rider_id = $10
        WHERE id = $11 AND tenant_id = $12
-         AND (status = '待处理' OR handler_phone = $4)
+         AND ((COALESCE(handler_phone,'') = '' AND status NOT IN ('已完成','已取消')) OR handler_phone = $4)
        RETURNING id`,
       [
         status,
