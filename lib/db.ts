@@ -324,14 +324,17 @@ export async function ensureDatabase(): Promise<Pool> {
 
   initPromise = (async () => {
     try {
-      // 0. Fast-path check: if schema already initialized, skip heavy migration/seed loops
+      // 0. 检测库是否已初始化过（决定是否跳过种子数据）。
+      //    注意：这里绝不提前 return——迁移 ALTER 批对每个新进程都必须执行（幂等），
+      //    否则代码新增的列（如 kitchen_status）永远不会落到已存在的老库上，
+      //    造成"列不存在"运行时错误（2026-11-10 kitchen_status 事故根因）。
+      let wasInitialized = false;
       try {
         const initCheck = await pool.query(
           "SELECT 1 FROM settings WHERE key = 'db_initialized_v2' LIMIT 1"
         );
         if (initCheck.rows.length > 0) {
-          isInitDone = true;
-          return;
+          wasInitialized = true;
         }
       } catch {
         // settings table might not exist yet, continue to create tables
@@ -591,6 +594,8 @@ export async function ensureDatabase(): Promise<Pool> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_tenant_phone ON staff_users(tenant_id, phone);
       `);
 
+      // 3-6. Seed tenants/dishes/tables/settings：仅首次初始化执行（老库跳过，省每启动 N 次往返）
+      if (!wasInitialized) {
       // 3. Seed tenants
       for (const t of DEFAULT_TENANTS) {
         await pool.query(
@@ -673,7 +678,9 @@ export async function ensureDatabase(): Promise<Pool> {
         }
       }
 
-      // 7. Mark database initialization complete so next boots are instant
+      } // end if (!wasInitialized) —— 种子数据仅在首次初始化执行
+
+      // 7. Mark database initialization complete so next boots skip seeding
       try {
         await pool.query(
           `INSERT INTO settings (tenant_id, key, value)
