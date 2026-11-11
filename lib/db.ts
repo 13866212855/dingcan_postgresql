@@ -1382,7 +1382,8 @@ export async function getSettings(tenantId = 'default'): Promise<AppSettings> {
   let xhu_gateway = 'https://api.xunhupay.com/payment/do.html';
   let pay_notify_base = '';
   let xhu_secret_configured = 0; // 密钥是否已配置（0/1 标志位，不回传密钥本身）
-  let scan_return_confirm = 0; // 静态码"返回即亮"开关（默认关闭=经典门禁行为）
+  let scan_return_confirm = 1; // 静态码"返回即亮"开关（2026-11-11 起默认开启=离开≥10秒合格返回才放行；
+  // 后台显式保存过 '0' 的租户仍尊重其关闭值——行存在时按行值判定，行缺失才走此默认）
 
   // 外卖费用配置（默认全 0 = 不启用，金额计算与旧版完全一致）
   let takeout_min_amount = 0; // 起送金额：菜品合计≥此值才可外卖下单（0=不限制）

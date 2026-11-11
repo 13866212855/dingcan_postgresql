@@ -207,6 +207,9 @@ export default function PaymentModal({
   const canConfirmStatic = actionGatesPassed;
   // 方案A醒目大按钮：移动端 + 返回即亮开启 + 合格返回（离开≥10秒）
   const showProminentConfirm = scanReturnConfirm && isMobile && qualifiedReturn;
+  // 徽标②的点亮口径与门禁一致：方案A下只有合格返回（离开≥10秒）才亮"已返回本页"——
+  // 快速往返（<10秒）不点亮徽标，避免顾客误以为步骤已完成而按钮却不出现的困惑
+  const returnBadgeLit = scanReturnConfirm ? qualifiedReturn : returnedAfterHidden;
 
   // 长按识别手势探测（≥400ms 视为长按；不阻断系统菜单，只做记录）
   const handlePressStart = () => {
@@ -432,12 +435,12 @@ export default function PaymentModal({
                   </span>
                   <span
                     className={`px-2 py-0.5 rounded-full border ${
-                      returnedAfterHidden
+                      returnBadgeLit
                         ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold'
                         : 'bg-white border-neutral-200 text-neutral-400'
                     }`}
                   >
-                    {returnedAfterHidden ? '✓ 已返回本页' : '② 支付后返回本页'}
+                    {returnBadgeLit ? '✓ 已返回本页' : '② 支付后返回本页'}
                   </span>
                 </div>
               )}
