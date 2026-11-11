@@ -8,6 +8,21 @@ export async function GET(req: NextRequest) {
   try {
     const tenantId = getTenantIdFromRequest(req);
     const settings = await getSettings(tenantId);
+
+    // 安全收紧（2026-11-11）：密钥类配置仅对持管理员会话的请求下发。
+    // 公网/顾客端只读展示与下单流程所需配置，不使用 llm_api_key 与 smtp_pass；
+    // 管理员后台（已登录，带 restaurant_admin_auth cookie）仍取全量，编辑与保存不受影响。
+    const isAdmin =
+      req.cookies.get('restaurant_admin_auth')?.value === 'authenticated_admin_token';
+    if (!isAdmin) {
+      const publicSafe: Record<string, unknown> = {
+        ...(settings as unknown as Record<string, unknown>),
+      };
+      delete publicSafe.llm_api_key;
+      delete publicSafe.smtp_pass;
+      return NextResponse.json({ success: true, data: publicSafe, tenantId });
+    }
+
     return NextResponse.json({ success: true, data: settings, tenantId });
   } catch (error: any) {
     return NextResponse.json(
@@ -19,6 +34,17 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // 安全收紧（2026-11-11）：系统配置写入必须持管理员会话——此前任何公网请求均可改写任意租户配置
+    // （包括调换收款二维码、关闭外卖费用），属于严重暴露面。所有保存入口均在管理员后台内，自带会话 cookie。
+    if (
+      req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token'
+    ) {
+      return NextResponse.json(
+        { success: false, error: '无管理员权限，请先登录后台' },
+        { status: 401 }
+      );
+    }
+
     const tenantId = getTenantIdFromRequest(req);
     const body = await req.json();
     const {
