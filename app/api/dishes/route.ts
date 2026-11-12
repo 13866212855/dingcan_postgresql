@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllDishes, createDish, clearAllDishes } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const body = await req.json();
@@ -61,14 +64,9 @@ export async function POST(req: NextRequest) {
  * DELETE 一键清空当前租户的全部菜品（危险操作：需管理员登录会话）
  */
 export async function DELETE(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.clear');
+  if (!auth.ok) return auth.response;
   try {
-    if (req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token') {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
-
     const tenantId = getTenantIdFromRequest(req);
     const deleted = await clearAllDishes(tenantId);
     return NextResponse.json({

@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllDishes, importDishesFromTenant } from '@/lib/db';
 import { getTenantIdFromRequest, DEFAULT_TENANT_ID } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export const dynamic = 'force-dynamic';
-
-/**
- * 管理员鉴权：批量写入操作必须持有后台登录会话
- */
-function isAdminAuthorized(req: NextRequest): boolean {
-  return req.cookies.get('restaurant_admin_auth')?.value === 'authenticated_admin_token';
-}
 
 /**
  * GET 预览接口：拉取前向子租户后台展示主租户菜品规模与本次将导入的数量
  * 返回 { masterTotal, tenantTotal, toImport, skipped }
  */
 export async function GET(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     if (tenantId === DEFAULT_TENANT_ID) {
@@ -57,13 +54,9 @@ export async function GET(req: NextRequest) {
  * 仅子租户可用（default 直接拒绝）；需管理员登录会话
  */
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.manage');
+  if (!auth.ok) return auth.response;
   try {
-    if (!isAdminAuthorized(req)) {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台再执行拉取' },
-        { status: 401 }
-      );
-    }
 
     const tenantId = getTenantIdFromRequest(req);
     if (tenantId === DEFAULT_TENANT_ID) {

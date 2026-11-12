@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTables, createTable } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +24,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'tables.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const body = await req.json();
@@ -87,6 +91,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requirePerm(req, 'tables.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const pool = await (await import('@/lib/db')).ensureDatabase();

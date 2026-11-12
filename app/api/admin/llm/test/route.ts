@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { testTextModelConnection, testImageModelConnection } from '@/lib/llm';
+import { requirePerm } from '@/lib/authz';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'llm.manage');
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
     const { type, baseUrl, apiKey, textModel, imageModel, prompt } = body;

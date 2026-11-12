@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTenants, getTenantById, createTenant, updateTenant, deleteTenant } from '@/lib/db';
 import { normalizeTenantId } from '@/lib/tenant';
+import { requirePlatformMaster } from '@/lib/authz';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,17 +48,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // 平台能力守卫（RBAC 天花板之外）：仅 /admin 无参登录的平台超管会话可建店（scope cookie 判定）
+  const auth = await requirePlatformMaster(req);
+  if (!auth.ok) return auth.response;
   try {
     const { searchParams } = new URL(req.url);
-    const operatorTenant = searchParams.get('tenant') || searchParams.get('operatorTenant');
-    
-    // 权限校验：子分店禁止创建分店，仅总店具有连锁扩张权限
-    if (operatorTenant && normalizeTenantId(operatorTenant) !== 'default') {
-      return NextResponse.json(
-        { success: false, error: '权限不足：仅总店管理员有权新增连锁分店' },
-        { status: 403 }
-      );
-    }
 
     const body = await req.json();
     const { id, name, logo, slogan, description, phone, address, status } = body;
@@ -98,6 +93,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const auth = await requirePlatformMaster(req);
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
     const { id, ...data } = body;
@@ -130,18 +127,12 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  // 平台能力守卫：仅平台超管会话可删店
+  const auth = await requirePlatformMaster(req);
+  if (!auth.ok) return auth.response;
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
-    const operatorTenant = searchParams.get('tenant') || searchParams.get('operatorTenant');
-
-    // 权限校验：子分店禁止删除分店
-    if (operatorTenant && normalizeTenantId(operatorTenant) !== 'default') {
-      return NextResponse.json(
-        { success: false, error: '权限不足：仅总店管理员有权删除连锁分店' },
-        { status: 403 }
-      );
-    }
 
     if (!id) {
       return NextResponse.json({ success: false, error: '缺少租户标识' }, { status: 400 });

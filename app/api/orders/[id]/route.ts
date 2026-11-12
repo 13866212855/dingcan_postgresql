@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOrderById, updateOrderStatus, updateOrderPayment, getSettings, verifyStaffSession, deleteOrder } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
 import { decodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
+import { resolveActor } from '@/lib/authz';
 import { sendOrderPaymentEmail } from '@/lib/email';
 
 export async function GET(
@@ -71,6 +72,21 @@ export async function PATCH(
     }
 
     if (status || kitchenStatus || deliveryStatus) {
+      // RBAC 守卫（2026-11-12）：订单流转需登录且持对应权限——
+      // 主状态/后厨备餐推进 → orders.process；配送流水线（抢单/提货/送货/送达）→ delivery.claim。
+      // 顾客端支付确认只走下方 paymentStatus 分支（保持公开，不受本守卫影响）。
+      const actor = await resolveActor(req);
+      const requiredPerms: string[] = [];
+      if (status || kitchenStatus) requiredPerms.push('orders.process');
+      if (deliveryStatus) requiredPerms.push('delivery.claim');
+      const missing = requiredPerms.filter((p) => !actor.permissions.includes(p));
+      if (actor.type === 'anon' || missing.length > 0) {
+        return NextResponse.json(
+          { success: false, error: actor.type === 'anon' ? '请先登录后再操作订单' : '当前账号没有执行此订单操作的权限' },
+          { status: actor.type === 'anon' ? 401 : 403 }
+        );
+      }
+
       const validStatuses = ['待处理', '制作中', '已完成', '已取消'];
       let targetStatus = status;
 

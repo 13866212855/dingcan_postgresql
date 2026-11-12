@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDishesBatch, BatchDishInput } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -10,13 +12,9 @@ export const dynamic = 'force-dynamic';
  * 按名称去重（同名已存在自动跳过），事务原子，返回 created / skipped / invalid 数量
  */
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.manage');
+  if (!auth.ok) return auth.response;
   try {
-    if (req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token') {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
 
     const body = await req.json();
     const tenantId = body.tenantId || getTenantIdFromRequest(req);

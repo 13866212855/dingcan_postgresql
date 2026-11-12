@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseDishListTextWithAI, generateDishImageWithAI } from '@/lib/llm';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -10,13 +12,9 @@ export const dynamic = 'force-dynamic';
  * - action=generate_image 按菜名大模型生成配图 → 智能压缩 → 转存 Cloudinary 永久直链
  */
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.batch_ai');
+  if (!auth.ok) return auth.response;
   try {
-    if (req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token') {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
 
     const body = await req.json();
     const tenantId = body.tenantId || getTenantIdFromRequest(req);

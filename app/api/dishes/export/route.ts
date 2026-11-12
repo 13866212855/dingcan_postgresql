@@ -3,6 +3,8 @@ import { promises as fsPromises } from 'fs';
 import path from 'path';
 import { getAllDishes } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +34,8 @@ function resolveLocalUploadPath(imagePath: string): string | null {
  * 响应带 Content-Disposition 附件下载头；id/tenant_id 不导出（导入端重新分配）。
  */
 export async function GET(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.export_import');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const withImages = new URL(req.url).searchParams.get('with_images') === '1';

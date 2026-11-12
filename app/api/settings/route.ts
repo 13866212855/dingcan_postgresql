@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSettings, updateSetting } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { resolveActor, partitionSettingsKeysByPermission } from '@/lib/authz';
+import { getSettingsKeyBucket } from '@/lib/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,19 +36,24 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    // 安全收紧（2026-11-11）：系统配置写入必须持管理员会话——此前任何公网请求均可改写任意租户配置
-    // （包括调换收款二维码、关闭外卖费用），属于严重暴露面。所有保存入口均在管理员后台内，自带会话 cookie。
-    if (
-      req.cookies.get('restaurant_admin_auth')?.value !== 'authenticated_admin_token'
-    ) {
+    // RBAC（2026-11-12）：管理员会话全量放行；员工会话按"键→权限桶"逐键裁决，
+    // 未授权桶的键被剔除（fail-closed：未授权配置永不被写入）并在响应中回报 skippedKeys。
+    const actor = await resolveActor(req);
+    if (actor.type === 'anon') {
       return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
+        { success: false, error: '请先登录后再保存配置' },
         { status: 401 }
       );
     }
 
     const tenantId = getTenantIdFromRequest(req);
-    const body = await req.json();
+    const rawBody = await req.json();
+    const presentKeys = Object.keys(rawBody || {});
+    const { allowed, skipped } = partitionSettingsKeysByPermission(actor, presentKeys, getSettingsKeyBucket);
+    const body: Record<string, any> = {};
+    for (const k of presentKeys) {
+      if (allowed.has(k)) body[k] = (rawBody as Record<string, any>)[k];
+    }
     const {
       payment_qr_code,
       points_ratio,
@@ -283,8 +290,8 @@ export async function POST(req: NextRequest) {
     if (smtp_user !== undefined) {
       await updateSetting('smtp_user', String(smtp_user).trim(), tenantId);
     }
-    if (smtp_pass !== undefined) {
-      // 允许更新授权码（保留去除多余空格的纯净16位密钥）
+    if (smtp_pass !== undefined && String(smtp_pass).trim() !== '') {
+      // 授权码仅在明确输入新值时覆盖（留空 = 保留原值；与 xhu_secret 同语义）
       await updateSetting('smtp_pass', String(smtp_pass).trim(), tenantId);
     }
     if (notify_email_to !== undefined) {
@@ -322,7 +329,11 @@ export async function POST(req: NextRequest) {
     const updated = await getSettings(tenantId);
     return NextResponse.json({
       success: true,
-      message: '配置保存成功',
+      message:
+        skipped.length > 0
+          ? '已保存您有权修改的配置；涉及收款/支付或AI的配置项未变更（需管理员权限）'
+          : '配置保存成功',
+      skippedKeys: skipped,
       data: updated,
       tenantId,
     });

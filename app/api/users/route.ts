@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser, getOrCreateUser, updateUser, getAllUsers, deleteUser } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePlatformMaster } from '@/lib/authz';
 
 export async function GET(req: NextRequest) {
   try {
@@ -51,27 +52,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requirePlatformMaster(req);
+  if (!auth.ok) return auth.response;
   try {
-    // 权限校验：仅主租户超级管理员（在 /admin 登录，scope === 'default'）拥有最高删除权限！
-    // 子租户直接进入后台（scope === 'xxx'）无权删除会员与积分记录
-    const adminToken = req.cookies.get('restaurant_admin_auth')?.value;
-    if (adminToken !== 'authenticated_admin_token') {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
-
-    const rawScope = req.cookies.get('dingcan_admin_scope')?.value?.trim().toLowerCase();
-    if (rawScope !== 'default') {
-      return NextResponse.json(
-        {
-          success: false,
-          error: '会员及积分删除为主租户(总店)超级管理员专属最高权限：仅在总店后台 /admin 登录后可跨店操作；分店直接登录无权删除任何会员记录',
-        },
-        { status: 403 }
-      );
-    }
+    // 平台超管专属（scope cookie 判定，authz 统一守卫；原 cookie+scope 手写检查等价收敛）
 
     const tenantId = getTenantIdFromRequest(req);
     const { searchParams } = new URL(req.url);

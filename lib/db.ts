@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { Dish, OrderItem, Order, DiningTable, AppUser, AppSettings, Tenant } from '@/types';
+import { SYSTEM_ROLE_PRESETS } from '@/lib/permissions';
 
 export type { Dish, OrderItem, Order, DiningTable, AppUser, AppSettings, Tenant };
 
@@ -461,7 +462,40 @@ export async function ensureDatabase(): Promise<Pool> {
           paid_at TIMESTAMPTZ
         );
 
+        CREATE TABLE IF NOT EXISTS tenant_roles (
+          id SERIAL PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          role_key TEXT NOT NULL,
+          name TEXT NOT NULL,
+          permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+          is_system INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_pay_records_tenant_order ON pay_records (tenant_id, order_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_roles_key ON tenant_roles (tenant_id, role_key);
+        CREATE INDEX IF NOT EXISTS idx_staff_users_role_fk ON staff_users (role_id);
+      `);
+
+      // 1b. RBAC migration: staff_users.role_id 挂接 tenant_roles（2026-11-12）
+      await pool.query(`
+        ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS role_id INTEGER;
+
+        -- 系统角色种子（幂等回填：每次启动对 tenants 表全部租户补种 order_handler/kitchen，
+        -- 已存在（含管理员已改过权限的）不覆盖；新建租户由 createTenant 同步种子）
+        INSERT INTO tenant_roles (tenant_id, role_key, name, permissions, is_system, enabled)
+        SELECT t.id, 'order_handler', '接单配送员',
+               '["orders.view","orders.process","orders.payment","delivery.claim"]'::jsonb, 1, 1
+        FROM tenants t
+        ON CONFLICT (tenant_id, role_key) DO NOTHING;
+
+        INSERT INTO tenant_roles (tenant_id, role_key, name, permissions, is_system, enabled)
+        SELECT t.id, 'kitchen', '后厨备餐员',
+               '["orders.view","orders.process","kitchen.view"]'::jsonb, 1, 1
+        FROM tenants t
+        ON CONFLICT (tenant_id, role_key) DO NOTHING;
       `);
 
       // 2. Safe schema upgrade migrations: add tenant_id column if missing in older tables
@@ -764,6 +798,16 @@ export async function createTenant(data: Partial<Tenant>): Promise<Tenant> {
     [id, name, logo, slogan, description, phone, address, status]
   );
 
+  // RBAC：新租户即时种子系统角色（与 ensureDatabase 每启动幂等回填同源，确保新建租户立刻可配员工）
+  await pool.query(
+    `INSERT INTO tenant_roles (tenant_id, role_key, name, permissions, is_system, enabled)
+     VALUES
+       ($1, 'order_handler', '接单配送员', '["orders.view","orders.process","orders.payment","delivery.claim"]'::jsonb, 1, 1),
+       ($1, 'kitchen', '后厨备餐员', '["orders.view","orders.process","kitchen.view"]'::jsonb, 1, 1)
+     ON CONFLICT (tenant_id, role_key) DO NOTHING`,
+    [id]
+  );
+
   // Initialize basic settings for new tenant
   await updateSetting('restaurant_name', name, id);
   await updateSetting('restaurant_slogan', slogan, id);
@@ -861,6 +905,8 @@ export async function deleteTenant(id: string): Promise<boolean> {
   await pool.query('DELETE FROM settings WHERE tenant_id = $1', [id]);
   await pool.query('DELETE FROM orders WHERE tenant_id = $1', [id]);
   await pool.query('DELETE FROM users WHERE tenant_id = $1', [id]);
+  await pool.query('DELETE FROM staff_users WHERE tenant_id = $1', [id]);
+  await pool.query('DELETE FROM tenant_roles WHERE tenant_id = $1', [id]);
   return true;
 }
 
@@ -1128,21 +1174,40 @@ export interface StaffUserRecord {
   tenant_id: string;
   name: string;
   phone: string;
-  role: string; // 'order_handler' = 接单员
+  role: string; // 角色 role_key（'kitchen'/'order_handler'/自定义角色键）
+  role_id?: number | null; // 挂接 tenant_roles.id（RBAC）
+  role_name?: string; // 角色显示名（列表联查）
   enabled: number; // 1=启用 0=停用（停用立即失去登录与处理权限）
   created_at?: string;
   updated_at?: string;
 }
 
-const STAFF_COLS = 'id, tenant_id, name, phone, role, enabled, created_at, updated_at';
+const STAFF_COLS = 'id, tenant_id, name, phone, role, role_id, enabled, created_at, updated_at';
 
 export async function getStaffByTenant(tenantId = 'default'): Promise<StaffUserRecord[]> {
   const pool = await ensureDatabase();
   const res = await pool.query(
-    `SELECT ${STAFF_COLS} FROM staff_users WHERE tenant_id = $1 ORDER BY id ASC`,
+    `SELECT s.id, s.tenant_id, s.name, s.phone, s.role, s.role_id, s.enabled, s.created_at, s.updated_at,
+            r.name AS role_name
+     FROM staff_users s
+     LEFT JOIN tenant_roles r ON r.id = s.role_id AND r.tenant_id = s.tenant_id
+     WHERE s.tenant_id = $1
+     ORDER BY s.id ASC`,
     [tenantId]
   );
   return res.rows.map((row) => formatRow<StaffUserRecord>(row));
+}
+
+/** 校验角色在本租户存在且启用，返回其 id（供 staff_users.role_id 挂接） */
+async function resolveRoleId(pool: Pool, tenantId: string, roleKey: string): Promise<number> {
+  const res = await pool.query(
+    'SELECT id, enabled FROM tenant_roles WHERE tenant_id = $1 AND role_key = $2',
+    [tenantId, roleKey]
+  );
+  const row = res.rows[0];
+  if (!row) throw new Error(`角色 ${roleKey} 不存在，请先在「角色权限」中创建`);
+  if (Number(row.enabled) !== 1) throw new Error(`角色 ${roleKey} 已停用，无法分配给员工`);
+  return Number(row.id);
 }
 
 export async function createStaffUser(
@@ -1153,9 +1218,11 @@ export async function createStaffUser(
   const name = (data.name || '').trim();
   const phone = (data.phone || '').trim();
   const password = (data.password || '').trim() || '123456';
-  const role = data.role === 'kitchen' ? 'kitchen' : 'order_handler';
+  const roleKey = (data.role || 'order_handler').trim().toLowerCase();
   if (!name) throw new Error('员工姓名不能为空');
   if (!/^[0-9]{5,20}$/.test(phone)) throw new Error('请输入有效的手机号（5-20位数字）');
+
+  const roleId = await resolveRoleId(pool, tenantId, roleKey);
 
   const dup = await pool.query(
     'SELECT id FROM staff_users WHERE tenant_id = $1 AND phone = $2',
@@ -1164,10 +1231,10 @@ export async function createStaffUser(
   if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已是本店员工，请勿重复添加`);
 
   const res = await pool.query(
-    `INSERT INTO staff_users (tenant_id, name, phone, password, role, enabled)
-     VALUES ($1, $2, $3, $4, $5, 1)
+    `INSERT INTO staff_users (tenant_id, name, phone, password, role, role_id, enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, 1)
      RETURNING ${STAFF_COLS}`,
-    [tenantId, name, phone, password, role]
+    [tenantId, name, phone, password, roleKey, roleId]
   );
   return formatRow<StaffUserRecord>(res.rows[0]);
 }
@@ -1194,6 +1261,11 @@ export async function updateStaffUser(
     if (dup.rows.length > 0) throw new Error(`手机号 ${phone} 已被本店其他员工使用`);
   }
 
+  let roleId: number | undefined;
+  if (patch.role !== undefined) {
+    roleId = await resolveRoleId(pool, tenantId, patch.role.trim().toLowerCase());
+  }
+
   const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
   const values: any[] = [];
   let i = 1;
@@ -1209,10 +1281,11 @@ export async function updateStaffUser(
     updates.push(`password = $${i++}`);
     values.push(patch.password.trim());
   }
-  if (patch.role !== undefined) {
-    const cleanRole = patch.role === 'kitchen' ? 'kitchen' : 'order_handler';
+  if (roleId !== undefined) {
     updates.push(`role = $${i++}`);
-    values.push(cleanRole);
+    values.push(patch.role!.trim().toLowerCase());
+    updates.push(`role_id = $${i++}`);
+    values.push(roleId);
   }
   if (patch.enabled !== undefined) {
     updates.push(`enabled = $${i++}`);
@@ -1282,6 +1355,180 @@ export async function verifyStaffSession(payload: {
     [payload.id, payload.tenantId, payload.phone]
   );
   return res.rows[0] ? formatRow<StaffUserRecord>(res.rows[0]) : null;
+}
+
+// ----------------------------------------------------
+// Tenant Roles（租户级可配置角色 · RBAC 核心）
+// ----------------------------------------------------
+export interface TenantRoleRecord {
+  id: number;
+  tenant_id: string;
+  role_key: string;
+  name: string;
+  permissions: string[];
+  is_system: number; // 1=系统内置角色（order_handler/kitchen），可改名改权限但不可删
+  enabled: number;
+  user_count?: number; // 引用该角色的员工数（列表联查）
+  created_at?: string;
+  updated_at?: string;
+}
+
+const ROLE_COLS = 'id, tenant_id, role_key, name, permissions, is_system, enabled, created_at, updated_at';
+
+function formatRoleRow(row: any): TenantRoleRecord {
+  return {
+    ...row,
+    permissions: Array.isArray(row.permissions) ? row.permissions : [],
+    user_count: row.user_count !== undefined ? Number(row.user_count) : undefined,
+  };
+}
+
+export async function getRolesByTenant(tenantId = 'default'): Promise<TenantRoleRecord[]> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT r.*, (SELECT count(*)::int FROM staff_users s WHERE s.role_id = r.id) AS user_count
+     FROM tenant_roles r WHERE r.tenant_id = $1
+     ORDER BY r.is_system DESC, r.id ASC`,
+    [tenantId]
+  );
+  return res.rows.map(formatRoleRow);
+}
+
+export async function getRoleById(tenantId: string, id: number): Promise<TenantRoleRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${ROLE_COLS} FROM tenant_roles WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId]
+  );
+  return res.rows[0] ? formatRoleRow(res.rows[0]) : null;
+}
+
+export async function getRoleByKey(tenantId: string, roleKey: string): Promise<TenantRoleRecord | null> {
+  const pool = await ensureDatabase();
+  const res = await pool.query(
+    `SELECT ${ROLE_COLS} FROM tenant_roles WHERE tenant_id = $1 AND role_key = $2`,
+    [tenantId, roleKey]
+  );
+  return res.rows[0] ? formatRoleRow(res.rows[0]) : null;
+}
+
+/** 校验 role_key 形态（与租户 subpath 同规范） */
+function assertRoleKey(roleKey: string): string {
+  const key = (roleKey || '').trim().toLowerCase();
+  if (!/^[a-z0-9_-]{2,30}$/.test(key)) {
+    throw new Error('角色标识只能包含小写字母、数字、中划线、下划线（2-30位），如 entrepreneur');
+  }
+  return key;
+}
+
+export async function createTenantRole(
+  tenantId: string,
+  data: { role_key: string; name: string; permissions: string[] }
+): Promise<TenantRoleRecord> {
+  const pool = await ensureDatabase();
+  const roleKey = assertRoleKey(data.role_key);
+  const name = (data.name || '').trim();
+  if (!name) throw new Error('角色名称不能为空');
+
+  const dup = await pool.query(
+    'SELECT id FROM tenant_roles WHERE tenant_id = $1 AND role_key = $2',
+    [tenantId, roleKey]
+  );
+  if (dup.rows.length > 0) throw new Error(`角色标识 ${roleKey} 已存在，请换一个`);
+
+  const res = await pool.query(
+    `INSERT INTO tenant_roles (tenant_id, role_key, name, permissions, is_system, enabled)
+     VALUES ($1, $2, $3, $4::jsonb, 0, 1)
+     RETURNING ${ROLE_COLS}`,
+    [tenantId, roleKey, name, JSON.stringify(data.permissions)]
+  );
+  return formatRoleRow(res.rows[0]);
+}
+
+export async function updateTenantRole(
+  tenantId: string,
+  id: number,
+  patch: { name?: string; permissions?: string[]; enabled?: number }
+): Promise<TenantRoleRecord | null> {
+  const pool = await ensureDatabase();
+  const existing = await getRoleById(tenantId, id);
+  if (!existing) return null;
+
+  const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const values: any[] = [];
+  let i = 1;
+  if (patch.name !== undefined && patch.name.trim()) {
+    updates.push(`name = $${i++}`);
+    values.push(patch.name.trim());
+  }
+  if (patch.permissions !== undefined) {
+    updates.push(`permissions = $${i++}::jsonb`);
+    values.push(JSON.stringify(patch.permissions));
+  }
+  if (patch.enabled !== undefined) {
+    updates.push(`enabled = $${i++}`);
+    values.push(patch.enabled ? 1 : 0);
+  }
+  values.push(id, tenantId);
+  const res = await pool.query(
+    `UPDATE tenant_roles SET ${updates.join(', ')} WHERE id = $${i++} AND tenant_id = $${i} RETURNING ${ROLE_COLS}`,
+    values
+  );
+  return res.rows[0] ? formatRoleRow(res.rows[0]) : null;
+}
+
+export async function deleteTenantRole(tenantId: string, id: number): Promise<{ ok: boolean; error?: string }> {
+  const pool = await ensureDatabase();
+  const existing = await getRoleById(tenantId, id);
+  if (!existing) return { ok: false, error: '角色不存在' };
+  if (existing.is_system === 1) return { ok: false, error: '系统内置角色不可删除（可停用或修改其权限）' };
+  const users = await pool.query('SELECT count(*)::int AS c FROM staff_users WHERE role_id = $1', [id]);
+  if ((users.rows[0]?.c || 0) > 0) {
+    return { ok: false, error: `仍有 ${users.rows[0].c} 名员工使用该角色，请先在「店员配置」中调整其角色` };
+  }
+  await pool.query('DELETE FROM tenant_roles WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  return { ok: true };
+}
+
+/**
+ * 员工有效权限解析（实时查库——角色被编辑后下一次请求即生效）：
+ * ① role_id 命中本租户角色 → 启用取其 permissions；**停用返回空数组**（停用=该角色全员即刻失去全部权限）
+ * ② role_id 缺失/失效时按 role 字符串查（老数据兼容），语义同上
+ * ③ 角色记录完全不存在（历史遗留未知角色）→ 按内置预设兜底，保证老员工登录行为零回归
+ */
+export async function resolveStaffPermissions(staff: {
+  tenant_id: string;
+  role: string;
+  role_id?: number | null;
+}): Promise<string[]> {
+  const pool = await ensureDatabase();
+  try {
+    if (staff.role_id) {
+      const res = await pool.query(
+        'SELECT permissions, enabled FROM tenant_roles WHERE id = $1 AND tenant_id = $2',
+        [staff.role_id, staff.tenant_id]
+      );
+      const row = res.rows[0];
+      if (row) {
+        if (Number(row.enabled) !== 1) return []; // 停用角色 → 权限归空（即时吊销）
+        return Array.isArray(row.permissions) ? row.permissions : [];
+      }
+    }
+    const res2 = await pool.query(
+      'SELECT permissions, enabled FROM tenant_roles WHERE tenant_id = $1 AND role_key = $2',
+      [staff.tenant_id, staff.role]
+    );
+    const row2 = res2.rows[0];
+    if (row2) {
+      if (Number(row2.enabled) !== 1) return []; // 停用角色 → 权限归空
+      return Array.isArray(row2.permissions) ? row2.permissions : [];
+    }
+  } catch (err) {
+    console.warn('[resolveStaffPermissions] role lookup failed, fallback to preset:', err);
+  }
+  // 角色记录完全不存在：内置预设兜底（与种子一致）；未知角色按接单配送员最小集
+  const preset = SYSTEM_ROLE_PRESETS[staff.role] || SYSTEM_ROLE_PRESETS.order_handler;
+  return preset ? [...preset.permissions] : ['orders.view', 'orders.process'];
 }
 
 // ----------------------------------------------------

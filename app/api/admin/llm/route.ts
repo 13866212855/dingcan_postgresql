@@ -2,23 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getLLMConfig, DEFAULT_LLM_CONFIG } from '@/lib/llm';
 import { updateSetting, getSettings } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
 
 export const dynamic = 'force-dynamic';
 
 // 安全收紧（2026-11-11）：大模型配置（含 api_key）读写必须持管理员会话——此前任何公网请求均可
-// 读取/改写密钥。消费方仅有管理员后台的 LLMManagement 页，自带会话 cookie。
-function isAdminAuthorized(req: NextRequest): boolean {
-  return req.cookies.get('restaurant_admin_auth')?.value === 'authenticated_admin_token';
-}
-
 export async function GET(req: NextRequest) {
+  const auth = await requirePerm(req, 'llm.manage');
+  if (!auth.ok) return auth.response;
   try {
-    if (!isAdminAuthorized(req)) {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
     const tenantId = getTenantIdFromRequest(req);
     const config = await getLLMConfig(tenantId);
 
@@ -39,13 +31,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'llm.manage');
+  if (!auth.ok) return auth.response;
   try {
-    if (!isAdminAuthorized(req)) {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台' },
-        { status: 401 }
-      );
-    }
     const tenantId = getTenantIdFromRequest(req);
     const body = await req.json();
 

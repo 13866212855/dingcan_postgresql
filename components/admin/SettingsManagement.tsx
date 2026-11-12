@@ -43,9 +43,14 @@ import { parseJsonResponse } from '@/lib/utils';
 
 interface SettingsManagementProps {
   tenantId?: string;
+  /** 当前会话权限集（RBAC）：缺省=管理员全显；传入后支付相关卡按 settings.payment 门控 */
+  perms?: string[];
 }
 
-export default function SettingsManagement({ tenantId = 'default' }: SettingsManagementProps) {
+export default function SettingsManagement({ tenantId = 'default', perms }: SettingsManagementProps) {
+  // RBAC 分段门控：不传 perms（或空）= 管理员全显；收款/积分/虎皮椒三卡需 settings.payment
+  const canCfg = (p: string) => !perms || perms.length === 0 || perms.includes(p);
+
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [localPreview, setLocalPreview] = useState('');
   const [pointsRatio, setPointsRatio] = useState(1);
@@ -506,12 +511,14 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
     setSuccessMsg('');
 
     try {
+      // RBAC：无 settings.payment 权限时（如仅运营配置的创业者）剔除支付桶键，避免保存后出现"部分未变更"提示
+      const withPay = canCfg('settings.payment');
       const res = await fetch(`/api/settings?tenant=${encodeURIComponent(tenantId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          payment_qr_code: qrCodeUrl.trim(),
-          points_ratio: Number(pointsRatio) || 1,
+          ...(withPay ? { payment_qr_code: qrCodeUrl.trim() } : {}),
+          ...(withPay ? { points_ratio: Number(pointsRatio) || 1 } : {}),
           custom_domain: customDomain.trim(),
           enable_dine_in: enableDineIn ? 1 : 0,
           enable_takeout: enableTakeout ? 1 : 0,
@@ -520,11 +527,15 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           enable_pay_before: enablePayBefore ? 1 : 0,
           enable_pay_after: enablePayAfter ? 1 : 0,
           amap_web_key: amapWebKey.trim(),
-          pay_mode: payMode,
-          xhu_appid: xhuAppid.trim(),
-          ...(xhuSecretInput.trim() !== '' ? { xhu_secret: xhuSecretInput.trim() } : {}),
-          xhu_gateway: xhuGateway.trim(),
-          pay_notify_base: payNotifyBase.trim(),
+          ...(withPay
+            ? {
+                pay_mode: payMode,
+                xhu_appid: xhuAppid.trim(),
+                ...(xhuSecretInput.trim() !== '' ? { xhu_secret: xhuSecretInput.trim() } : {}),
+                xhu_gateway: xhuGateway.trim(),
+                pay_notify_base: payNotifyBase.trim(),
+              }
+            : {}),
           scan_return_confirm: scanReturnConfirm ? 1 : 0,
           takeout_min_amount: Number(takeoutMinAmount) || 0,
           takeout_packing_fee: Number(takeoutPackingFee) || 0,
@@ -972,7 +983,8 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           </div>
         </div>
 
-        {/* 4. Payment QR Code Section */}
+        {/* 4. Payment QR Code Section（settings.payment 门控） */}
+        {canCfg('settings.payment') && (
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -1130,8 +1142,10 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
             </div>
           </div>
         </div>
+        )}
 
-        {/* Points System Setting */}
+        {/* Points System Setting（settings.payment 门控） */}
+        {canCfg('settings.payment') && (
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -1177,6 +1191,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
             </p>
           </div>
         </div>
+        )}
 
         {/* Table QR Code Access Domain (WeChat compatibility & Custom Domain) */}
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-4">
@@ -1234,7 +1249,8 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
           </div>
         </div>
 
-        {/* Online Pay Channel (XunhuPay) */}
+        {/* Online Pay Channel (XunhuPay)（settings.payment 门控） */}
+        {canCfg('settings.payment') && (
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -1414,6 +1430,7 @@ export default function SettingsManagement({ tenantId = 'default' }: SettingsMan
             </div>
           )}
         </div>
+        )}
 
         {/* 微信新订单强提醒（PushPlus 推送加 · 0元免费微信直推） */}
         <div className="bg-white p-6 rounded-2xl border border-neutral-200/80 shadow-2xs space-y-5">

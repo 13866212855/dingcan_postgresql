@@ -38,6 +38,7 @@ import {
   Zap,
   FileJson,
   FileUp,
+  ShieldCheck,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
@@ -50,8 +51,10 @@ import StoreManagement from '@/components/admin/StoreManagement';
 import TenantManagement from '@/components/admin/TenantManagement';
 import LLMManagement from '@/components/admin/LLMManagement';
 import KitchenDisplayView from '@/components/admin/KitchenDisplayView';
+import RoleManagement from '@/components/admin/RoleManagement';
 import { Dish, Order, Tenant, StaffUser } from '@/types';
 import { safeSetItem, safeRemoveItem } from '@/lib/storage';
+import { ALL_TENANT_PERMS } from '@/lib/permissions';
 import { alertNewOrder, unlockAudio, playOrderChime } from '@/lib/sound';
 import { parseJsonResponse } from '@/lib/utils';
 import { classifyOrderDishes, isReadyMadeDish } from '@/lib/dishClassifier';
@@ -72,10 +75,15 @@ export default function AdminPage() {
     name: string;
     phone: string;
     role?: string;
+    roleName?: string;
   } | null>(null);
   const isStaffMode = staffInfo !== null;
   const isKitchenStaff = staffInfo?.role === 'kitchen';
-  const isRiderStaff = isStaffMode && !isKitchenStaff;
+
+  // RBAC（2026-11-12）：当前会话有效权限集（管理员=租户级全集；员工=角色权限实时下发），
+  // can() 驱动全部 Tab 与按钮渲染——取代旧的 isStaffMode/isRiderStaff 硬裁剪
+  const [myPerms, setMyPerms] = useState<string[]>([]);
+  const can = (perm: string) => myPerms.includes(perm);
 
   // 管理员身份范围（scope）：登录时所在租户。
   // 'default' = 在总店后台 /admin 登录的超级管理员 → 独享跨租户订单删除权；
@@ -139,17 +147,39 @@ export default function AdminPage() {
 
   // Active Admin Tab: 'orders' | 'kitchen' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
   const [activeTabState, setActiveTabState] = useState<
-    'orders' | 'kitchen' | 'dishes' | 'tables' | 'members' | 'staff' | 'store' | 'tenants' | 'settings' | 'llm'
+    'orders' | 'kitchen' | 'dishes' | 'tables' | 'members' | 'staff' | 'roles' | 'store' | 'tenants' | 'settings' | 'llm'
   >('orders');
 
-  // 权限裁剪：后厨员工默认且仅能访问后厨大屏与订单中心；配送接单员锁定订单中心；子分店后台永远进不了"连锁分店"管理Tab
-  const activeTab = isKitchenStaff
-    ? (activeTabState === 'orders' ? 'orders' : 'kitchen')
-    : isRiderStaff
-    ? 'orders'
-    : (!isMasterAdmin && activeTabState === 'tenants')
-    ? 'orders'
-    : activeTabState;
+  // RBAC 权限驱动渲染：每个 Tab 对应权限键；无权 Tab 不渲染、激活态自动回落到首个有权模块
+  const canSeeSettings = can('settings.payment') || can('settings.ops');
+  const tabAllowed = (tab: string): boolean => {
+    switch (tab) {
+      case 'orders': return can('orders.view');
+      case 'kitchen': return can('kitchen.view');
+      case 'dishes': return can('dishes.view');
+      case 'tables': return can('tables.view');
+      case 'members': return can('members.view');
+      case 'staff': return can('staff.view');
+      case 'roles': return can('roles.manage');
+      case 'store': return can('store.manage');
+      case 'tenants': return isMasterAdmin;
+      case 'settings': return canSeeSettings;
+      case 'llm': return can('llm.manage');
+      default: return false;
+    }
+  };
+  const activeTab = (() => {
+    // 后厨角色默认且仅在后厨大屏/订单明细间切换（保留既有体验）
+    if (isKitchenStaff && tabAllowed('kitchen')) {
+      return activeTabState === 'orders' ? 'orders' : 'kitchen';
+    }
+    if (tabAllowed(activeTabState)) return activeTabState;
+    const fallbackOrder = ['orders', 'kitchen', 'dishes'];
+    for (const t of fallbackOrder) {
+      if (tabAllowed(t)) return t as any;
+    }
+    return 'orders';
+  })();
   const setActiveTab = setActiveTabState;
 
   // Orders State
@@ -244,6 +274,7 @@ export default function AdminPage() {
               if (data.staff.tenantId === currentTenantId) {
                 setStaffInfo(data.staff);
                 setAdminScope('');
+                setMyPerms(Array.isArray(data.permissions) ? data.permissions : []);
                 setIsAuthenticated(true);
                 if (data.staff.role === 'kitchen') {
                   setActiveTabState('kitchen');
@@ -251,16 +282,19 @@ export default function AdminPage() {
               } else {
                 setStaffInfo(null);
                 setAdminScope('');
+                setMyPerms([]);
                 setIsAuthenticated(false);
               }
             } else {
               setStaffInfo(null);
               setAdminScope(typeof data.scope === 'string' ? data.scope : '');
+              setMyPerms(Array.isArray(data.permissions) ? data.permissions : []);
               setIsAuthenticated(true);
             }
           } else {
             setStaffInfo(null);
             setAdminScope('');
+            setMyPerms([]);
             setIsAuthenticated(false);
           }
         }
@@ -268,6 +302,7 @@ export default function AdminPage() {
         if (!isCancelled) {
           setStaffInfo(null);
           setAdminScope('');
+          setMyPerms([]);
           setIsAuthenticated(false);
         }
       }
@@ -525,6 +560,7 @@ export default function AdminPage() {
         if (data?.success && data.staff) {
           setStaffInfo(data.staff);
           setAdminScope('');
+          setMyPerms(Array.isArray(data.permissions) ? data.permissions : []);
           setIsAuthenticated(true);
           if (data.staff.role === 'kitchen') {
             setActiveTab('kitchen');
@@ -552,6 +588,7 @@ export default function AdminPage() {
         if (data?.success) {
           setStaffInfo(null); // 管理员登录后清除可能残留的接单员会话状态
           setAdminScope(knownTenant); // 登录身份范围 = 登录时所在租户（服务端同步写 scope cookie）
+          setMyPerms(ALL_TENANT_PERMS); // 管理员隐式持租户级权限全集
           setIsAuthenticated(true);
           safeSetItem('restaurant_admin_auth', 'true');
           updateActiveTenant(knownTenant);
@@ -576,6 +613,7 @@ export default function AdminPage() {
     }
     safeRemoveItem('restaurant_admin_auth');
     setStaffInfo(null);
+    setMyPerms([]);
     setIsAuthenticated(false);
   };
 
@@ -1112,7 +1150,7 @@ export default function AdminPage() {
                       <Bike className="w-3 h-3 text-sky-300" />
                     )}
                     <span>
-                      {isKitchenStaff ? '后厨备餐员' : '接单配送员'} · {staffInfo.name}
+                      {staffInfo.roleName || (isKitchenStaff ? '后厨备餐员' : '接单配送员')} · {staffInfo.name}
                     </span>
                   </div>
                 )}
@@ -1143,8 +1181,8 @@ export default function AdminPage() {
               )}
             </button>
 
-            {/* 后厨备餐大屏Tab（店长与后厨角色均可进入） */}
-            {(!isStaffMode || isKitchenStaff) && (
+            {/* 后厨备餐大屏Tab（持 kitchen.view 权限者可见） */}
+            {can('kitchen.view') && (
               <button
                 id="tab-kitchen"
                 onClick={() => setActiveTab('kitchen')}
@@ -1164,7 +1202,7 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {can('dishes.view') && (
               <button
                 id="tab-dishes"
                 onClick={() => setActiveTab('dishes')}
@@ -1180,7 +1218,7 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {can('tables.view') && (
               <button
                 id="tab-tables"
                 onClick={() => setActiveTab('tables')}
@@ -1195,7 +1233,7 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {can('members.view') && (
               <button
                 id="tab-members"
                 onClick={() => setActiveTab('members')}
@@ -1210,8 +1248,8 @@ export default function AdminPage() {
               </button>
             )}
 
-            {/* 接单员管理：店长为本店配置接单账号（mymultenant Tier 3） */}
-            {!isStaffMode && (
+            {/* 店员配置：持 staff.view 可见（管理员/被授权创业者） */}
+            {can('staff.view') && (
               <button
                 id="tab-staff"
                 onClick={() => setActiveTab('staff')}
@@ -1226,7 +1264,23 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {/* 角色权限：RBAC 配置中心（roles.manage，默认仅管理员/店长持有） */}
+            {can('roles.manage') && (
+              <button
+                id="tab-roles"
+                onClick={() => setActiveTab('roles')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeTab === 'roles'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>角色权限</span>
+              </button>
+            )}
+
+            {can('store.manage') && (
               <button
                 id="tab-store"
                 onClick={() => setActiveTab('store')}
@@ -1262,7 +1316,7 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {canSeeSettings && (
               <button
                 id="tab-settings"
                 onClick={() => setActiveTab('settings')}
@@ -1277,7 +1331,7 @@ export default function AdminPage() {
               </button>
             )}
 
-            {!isStaffMode && (
+            {can('llm.manage') && (
               <button
                 id="tab-llm"
                 onClick={() => setActiveTab('llm')}
@@ -1351,26 +1405,21 @@ export default function AdminPage() {
 
         {/* Mobile Navigation Tabs */}
         <div className="flex md:hidden overflow-x-auto px-2 py-2 bg-neutral-800/90 border-t border-neutral-700 space-x-1">
-          {(isKitchenStaff
-            ? [
-                { id: 'kitchen', label: '后厨备餐', icon: ChefHat },
-                { id: 'orders', label: '订单明细', icon: ClipboardList },
-              ]
-            : isRiderStaff
-            ? [{ id: 'orders', label: '外卖接单配送', icon: Bike }]
-            : [
-                { id: 'orders', label: '订单中心', icon: ClipboardList },
-                { id: 'kitchen', label: '后厨备餐', icon: ChefHat },
-                { id: 'dishes', label: '菜品库', icon: Utensils },
-                { id: 'tables', label: '餐桌管理', icon: MapPin },
-                { id: 'members', label: '会员积分', icon: Users },
-                { id: 'staff', label: '店员配置', icon: UserCog },
-                { id: 'store', label: '店面品牌', icon: Store },
-                ...(isMasterAdmin ? [{ id: 'tenants', label: '连锁门店', icon: Building2 }] : []),
-                { id: 'settings', label: '收款配置', icon: Settings },
-                { id: 'llm', label: 'AI大脑', icon: Brain },
-              ]
-          ).map((item) => {
+          {[
+            { id: 'orders', label: isStaffMode && !can('dishes.view') ? '本店订单' : '订单中心', icon: ClipboardList, show: true },
+            { id: 'kitchen', label: '后厨备餐', icon: ChefHat, show: can('kitchen.view') },
+            { id: 'dishes', label: '菜品库', icon: Utensils, show: can('dishes.view') },
+            { id: 'tables', label: '餐桌管理', icon: MapPin, show: can('tables.view') },
+            { id: 'members', label: '会员积分', icon: Users, show: can('members.view') },
+            { id: 'staff', label: '店员配置', icon: UserCog, show: can('staff.view') },
+            { id: 'roles', label: '角色权限', icon: ShieldCheck, show: can('roles.manage') },
+            { id: 'store', label: '店面品牌', icon: Store, show: can('store.manage') },
+            { id: 'tenants', label: '连锁门店', icon: Building2, show: isMasterAdmin },
+            { id: 'settings', label: '收款配置', icon: Settings, show: canSeeSettings },
+            { id: 'llm', label: 'AI大脑', icon: Brain, show: can('llm.manage') },
+          ]
+            .filter((item) => item.show)
+            .map((item) => {
             const Icon = item.icon;
             const isSel = activeTab === item.id;
             return (
@@ -1453,13 +1502,15 @@ export default function AdminPage() {
                 <div className="text-xl font-black text-blue-600 mt-1">{stats.cooking} 笔</div>
               </div>
 
-              <div className="bg-emerald-50/80 p-3.5 rounded-2xl border border-emerald-200/80 shadow-2xs">
-                <span className="text-[11px] text-emerald-800 font-bold">实付流水营收</span>
-                <div className="text-xl font-black text-emerald-600 mt-1">
-                  <span className="text-xs">¥</span>
-                  {stats.revenue.toFixed(2)}
+              {can('orders.revenue') && (
+                <div className="bg-emerald-50/80 p-3.5 rounded-2xl border border-emerald-200/80 shadow-2xs">
+                  <span className="text-[11px] text-emerald-800 font-bold">实付流水营收</span>
+                  <div className="text-xl font-black text-emerald-600 mt-1">
+                    <span className="text-xs">¥</span>
+                    {stats.revenue.toFixed(2)}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Controls Bar: Filters, Auto-refresh, Sound, Search */}
@@ -1630,7 +1681,7 @@ export default function AdminPage() {
 
                             {/* Payment status badge with toggle */}
                             <button
-                              onClick={() => handleTogglePaymentStatus(order.id, order.payment_status)}
+                              onClick={() => can('orders.payment') && handleTogglePaymentStatus(order.id, order.payment_status)}
                               title="点击可直接切换收款状态"
                               className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-transform active:scale-95 cursor-pointer ${
                                 isPaid
@@ -1801,8 +1852,8 @@ export default function AdminPage() {
                         </button>
 
                         <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
-                          {/* 全单现成菜品：提供【⚡ 一键出餐】快速按钮 */}
-                          {allReadyMade && (isPending || isCooking) && kitchenStatus !== '已备齐' && (
+                          {/* 全单现成菜品：提供【⚡ 一键出餐】快速按钮（orders.process） */}
+                          {can('orders.process') && allReadyMade && (isPending || isCooking) && kitchenStatus !== '已备齐' && (
                             <button
                               onClick={() => handleFastPrepOrder(order)}
                               className="px-2.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-xs transition-colors flex items-center space-x-1 cursor-pointer"
@@ -1813,8 +1864,8 @@ export default function AdminPage() {
                             </button>
                           )}
 
-                          {/* 外卖配送流水线按钮 */}
-                          {isDelivery ? (
+                          {/* 外卖配送流水线按钮（delivery.claim） */}
+                          {isDelivery && can('delivery.claim') ? (
                             <>
                               {deliveryStatus === '待接单' && !isDone && (
                                 <button
@@ -1863,8 +1914,8 @@ export default function AdminPage() {
                                 </button>
                               )}
                             </>
-                          ) : (
-                            /* 堂食标准流水线 */
+                          ) : can('orders.process') ? (
+                            /* 堂食标准流水线（orders.process） */
                             <>
                               {isPending && (
                                 <button
@@ -1886,9 +1937,9 @@ export default function AdminPage() {
                                 </button>
                               )}
                             </>
-                          )}
+                          ) : null}
 
-                          {!isDone && !isCancelled && (
+                          {can('orders.process') && !isDone && !isCancelled && (
                             <button
                               onClick={() => {
                                 if (confirm(`确认取消此订单【${order.id}】吗？`)) {
@@ -2178,6 +2229,9 @@ export default function AdminPage() {
         ) : activeTab === 'staff' ? (
           /* ================= STAFF (ORDER HANDLER) MANAGEMENT MODULE ================= */
           <StaffManagement tenantId={currentTenantId} />
+        ) : activeTab === 'roles' ? (
+          /* ================= ROLE & PERMISSION MANAGEMENT (RBAC) ================= */
+          <RoleManagement tenantId={currentTenantId} />
         ) : activeTab === 'store' ? (
           /* ================= STORE BRAND MODULE ================= */
           <StoreManagement
@@ -2223,7 +2277,7 @@ export default function AdminPage() {
           <LLMManagement tenantId={currentTenantId} />
         ) : (
           /* ================= SETTINGS MODULE ================= */
-          <SettingsManagement tenantId={currentTenantId} />
+          <SettingsManagement tenantId={currentTenantId} perms={myPerms} />
         )}
       </main>
 

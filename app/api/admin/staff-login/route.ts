@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyStaffLogin, findStaffByCredentials } from '@/lib/db';
+import { verifyStaffLogin, findStaffByCredentials, resolveStaffPermissions, getRoleByKey } from '@/lib/db';
 import { encodeStaffSession, STAFF_AUTH_COOKIE } from '@/lib/staffAuth';
 import { getTenantIdFromRequest, normalizeTenantId } from '@/lib/tenant';
 
@@ -52,6 +52,11 @@ export async function POST(req: NextRequest) {
 
     const isKitchen = staff.role === 'kitchen';
     const welcomeMsg = isKitchen ? `欢迎进入后厨大屏，${staff.name}！` : `欢迎接单，${staff.name}！`;
+    const permissions = await resolveStaffPermissions(staff);
+    const roleInfo = staff.role_id
+      ? null
+      : await getRoleByKey(staff.tenant_id, staff.role).catch(() => null);
+    const roleName = roleInfo?.name || (isKitchen ? '后厨备餐员' : staff.role === 'order_handler' ? '接单配送员' : staff.role);
     const response = NextResponse.json({
       success: true,
       message: welcomeMsg,
@@ -61,7 +66,10 @@ export async function POST(req: NextRequest) {
         name: staff.name,
         phone: staff.phone,
         role: staff.role || 'order_handler',
+        role_id: staff.role_id ?? null,
+        roleName,
       },
+      permissions,
       tenant: resolvedTenant,
     });
 

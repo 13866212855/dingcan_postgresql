@@ -4,6 +4,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { createDishesBatch } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 import { saveImageToPublicUploads } from '@/lib/localImageStore';
 
 export const dynamic = 'force-dynamic';
@@ -13,13 +15,6 @@ const MAX_DISHES = 500;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 单张内嵌图片解码后上限
 const MAX_EMBEDDED_IMAGES = 200;
 const DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/;
-
-/**
- * 管理员鉴权：批量写入操作必须持有后台登录会话（与拉取总店/一键清空同口径）
- */
-function isAdminAuthorized(req: NextRequest): boolean {
-  return req.cookies.get('restaurant_admin_auth')?.value === 'authenticated_admin_token';
-}
 
 /**
  * 校验 /uploads/ 相对路径合法（防路径穿越），返回 public/uploads 内绝对路径或 null
@@ -45,14 +40,10 @@ function md5(buf: Buffer): string {
  * - 外部 http(s) 图链原样保留并计数返回（前端已提示裂图风险）
  */
 export async function POST(req: NextRequest) {
+  const auth = await requirePerm(req, 'dishes.export_import');
+  if (!auth.ok) return auth.response;
   try {
-    if (!isAdminAuthorized(req)) {
-      return NextResponse.json(
-        { success: false, error: '无管理员权限，请先登录后台再执行导入' },
-        { status: 401 }
-      );
-    }
-    const tenantId = getTenantIdFromRequest(req);
+        const tenantId = getTenantIdFromRequest(req);
 
     const contentLength = Number(req.headers.get('content-length') || 0);
     if (contentLength > MAX_BODY_BYTES) {

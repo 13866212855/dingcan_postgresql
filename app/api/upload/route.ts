@@ -4,6 +4,7 @@ import { saveImageToPublicUploads } from '@/lib/localImageStore';
 import { optimizeImageBuffer } from '@/lib/imageProcessor';
 import { getLLMConfig, analyzeDishImageWithAI } from '@/lib/llm';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { resolveActor } from '@/lib/authz';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,8 +34,20 @@ export async function POST(req: NextRequest) {
     const reqTenant = (formData.get('tenant') as string) || getTenantIdFromRequest(req);
     const llmConfig = await getLLMConfig(reqTenant);
 
+    // RBAC：按上传类型映射权限（dish→菜品管理 / qr→餐桌管理 / logo→品牌设置）；管理员全通过
+    const preActor = await resolveActor(req);
+    const uploadTypeRaw = (formData.get('type') as string) || 'dish';
+    const requiredPerm =
+      uploadTypeRaw === 'qr' ? 'tables.manage' : uploadTypeRaw === 'logo' ? 'store.manage' : 'dishes.manage';
+    if (preActor.type === 'anon' || !preActor.permissions.includes(requiredPerm)) {
+      return NextResponse.json(
+        { success: false, error: '当前账号没有上传此类图片的权限' },
+        { status: preActor.type === 'anon' ? 401 : 403 }
+      );
+    }
+
     // Map upload category to Cloudinary folders
-    const uploadType = (formData.get('type') as string) || 'dish';
+    const uploadType = uploadTypeRaw;
     let targetFolder = 'restaurant_dishes';
     if (uploadType === 'qr') {
       targetFolder = 'restaurant_qrcodes';

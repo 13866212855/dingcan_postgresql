@@ -108,8 +108,23 @@ export interface StaffUser {
   tenant_id?: string;
   name: string;
   phone: string;
-  role: 'order_handler' | 'kitchen' | 'admin' | string; // 'order_handler'=接单配送员, 'kitchen'=后厨备餐员, 'admin'=管理员
+  role: 'order_handler' | 'kitchen' | 'admin' | string; // 角色 role_key（系统两枚+自定义角色如 entrepreneur）
+  role_id?: number | null; // 挂接 tenant_roles.id（RBAC）
+  role_name?: string; // 角色显示名
   enabled: number; // 1=启用, 0=停用
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TenantRole {
+  id: number;
+  tenant_id?: string;
+  role_key: string;
+  name: string;
+  permissions: string[];
+  is_system: number; // 1=系统内置（order_handler/kitchen），不可删除
+  enabled: number;
+  user_count?: number;
   created_at?: string;
   updated_at?: string;
 }

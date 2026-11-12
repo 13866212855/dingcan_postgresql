@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateTable, deleteTable, toggleTableOccupied, getAllTables } from '@/lib/db';
 import { getTenantIdFromRequest } from '@/lib/tenant';
+import { requirePerm } from '@/lib/authz';
+
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requirePerm(req, 'tables.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const { id } = await params;
@@ -52,6 +56,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requirePerm(req, 'tables.manage');
+  if (!auth.ok) return auth.response;
   try {
     const tenantId = getTenantIdFromRequest(req);
     const { id } = await params;

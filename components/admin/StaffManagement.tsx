@@ -40,8 +40,11 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<'kitchen' | 'order_handler'>('kitchen');
+  const [newRole, setNewRole] = useState<string>('kitchen');
   const [adding, setAdding] = useState(false);
+
+  // RBAC：本店可分配角色列表（来自「角色权限」模块，含系统角色与自定义角色）
+  const [roleOptions, setRoleOptions] = useState<{ role_key: string; name: string; enabled: number }[]>([]);
 
   const fetchStaff = useCallback(async () => {
     setLoading(true);
@@ -63,6 +66,36 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
       setLoading(false);
     }
   }, [tenantId]);
+
+  // 拉取本店角色列表（供分配下拉使用；后厨/接单员之外的自定义角色如"创业者"也在此列）
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/roles?tenant=${encodeURIComponent(tenantId)}`, {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        const data = await parseJsonResponse(res);
+        if (!ignore && data?.success && Array.isArray(data.data)) {
+          setRoleOptions(
+            data.data
+              .filter((r: any) => Number(r.enabled) === 1)
+              .map((r: any) => ({ role_key: r.role_key, name: r.name, enabled: 1 }))
+          );
+        }
+      } catch {
+        // 角色列表拉取失败不阻塞员工管理（下拉退化为两个系统角色）
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [tenantId]);
+
+  const roleName = (roleKey: string) =>
+    roleOptions.find((r) => r.role_key === roleKey)?.name ||
+    (roleKey === 'kitchen' ? '后厨备餐员' : roleKey === 'order_handler' ? '接单配送员' : roleKey);
 
   useEffect(() => {
     let ignore = false;
@@ -156,10 +189,9 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
     }
   };
 
-  const handleSwitchRole = async (staff: StaffUser) => {
-    const targetRole = staff.role === 'kitchen' ? 'order_handler' : 'kitchen';
-    const targetLabel = targetRole === 'kitchen' ? '后厨备餐员' : '接单配送员';
-    if (!confirm(`确定将员工【${staff.name}】的角色切换为【${targetLabel}】吗？`)) return;
+  const handleAssignRole = async (staff: StaffUser, targetRole: string) => {
+    if (!targetRole || targetRole === staff.role) return;
+    if (!confirm(`确定将员工【${staff.name}】的角色调整为【${roleName(targetRole)}】吗？\n其界面与可操作范围将在下一次刷新后按新角色生效。`)) return;
 
     try {
       const res = await fetch(`/api/admin/staff/${staff.id}?tenant=${encodeURIComponent(tenantId)}`, {
@@ -171,7 +203,7 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
       if (data?.success) {
         fetchStaff();
       } else {
-        alert(data?.error || '切换角色失败');
+        alert(data?.error || '调整角色失败');
       }
     } catch (e: any) {
       alert('操作失败: ' + (e?.message || ''));
@@ -260,7 +292,7 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
               <code className="mx-1 px-1.5 py-0.5 bg-white border border-neutral-200 rounded text-[10px]">
                 /admin?tenant={tenantId}
               </code>
-              选择「店员/接单员登录」，输入手机号与密码即可。
+              登录页输入手机号与密码即可。除后厨/接单员外，在「角色权限」中创建的自定义角色（如<b>创业者</b>）也可在此分配给员工。
             </p>
           </div>
         </div>
@@ -310,33 +342,25 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-neutral-600 mb-1">岗位角色 *</label>
-              <div className="flex rounded-xl p-0.5 bg-neutral-100 border border-neutral-200">
-                <button
-                  type="button"
-                  onClick={() => setNewRole('kitchen')}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
-                    newRole === 'kitchen'
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  <ChefHat className="w-3.5 h-3.5" />
-                  <span>后厨备餐员</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNewRole('order_handler')}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
-                    newRole === 'order_handler'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-neutral-600 hover:text-neutral-900'
-                  }`}
-                >
-                  <Bike className="w-3.5 h-3.5" />
-                  <span>接单配送员</span>
-                </button>
-              </div>
+              <label className="block text-[11px] font-bold text-neutral-600 mb-1">分配角色 *</label>
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-neutral-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-indigo-500 cursor-pointer bg-white"
+              >
+                {(roleOptions.length > 0
+                  ? roleOptions
+                  : [
+                      { role_key: 'kitchen', name: '后厨备餐员', enabled: 1 },
+                      { role_key: 'order_handler', name: '接单配送员', enabled: 1 },
+                    ]
+                ).map((r) => (
+                  <option key={r.role_key} value={r.role_key}>
+                    {r.name}
+                    {r.role_key === 'kitchen' ? '（后厨大屏）' : r.role_key === 'order_handler' ? '（接单配送）' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -358,11 +382,7 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
               className="px-5 py-2.5 bg-gradient-to-r from-neutral-900 to-neutral-800 hover:from-black hover:to-neutral-900 text-white text-xs font-bold rounded-xl shadow-md flex items-center justify-center space-x-1.5 transition-transform active:scale-95 disabled:opacity-60 cursor-pointer"
             >
               {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              <span>
-                {adding
-                  ? '添加中...'
-                  : `确认添加${newRole === 'kitchen' ? '【后厨备餐员】' : '【接单配送员】'}`}
-              </span>
+              <span>{adding ? '添加中...' : `确认添加【${roleName(newRole)}】`}</span>
             </button>
           </div>
         </form>
@@ -448,21 +468,38 @@ export default function StaffManagement({ tenantId = 'default' }: StaffManagemen
                           {isKitchen ? (
                             <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-black flex items-center space-x-1">
                               <ChefHat className="w-3.5 h-3.5 text-amber-600" />
-                              <span>后厨备餐员</span>
+                              <span>{staff.role_name || '后厨备餐员'}</span>
                             </span>
                           ) : (
                             <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-800 border border-blue-200 text-xs font-black flex items-center space-x-1">
                               <Bike className="w-3.5 h-3.5 text-blue-600" />
-                              <span>接单配送员</span>
+                              <span>{staff.role_name || '接单配送员'}</span>
                             </span>
                           )}
-                          <button
-                            onClick={() => handleSwitchRole(staff)}
-                            className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded-md transition-colors cursor-pointer"
-                            title={`切换为【${isKitchen ? '接单配送员' : '后厨备餐员'}】`}
+                          <select
+                            value={staff.role}
+                            onChange={(e) => handleAssignRole(staff, e.target.value)}
+                            className="px-1.5 py-1 text-[10px] border border-neutral-200 rounded-lg bg-white text-neutral-600 cursor-pointer hover:border-indigo-300"
+                            title="调整该员工的角色（权限范围随之变化）"
                           >
-                            <ArrowLeftRight className="w-3.5 h-3.5" />
-                          </button>
+                            {(roleOptions.length > 0
+                              ? roleOptions.map((r) => r.role_key)
+                              : ['kitchen', 'order_handler']
+                            ).includes(staff.role) || (
+                              <option value={staff.role}>{staff.role_name || staff.role}</option>
+                            )}
+                            {(roleOptions.length > 0
+                              ? roleOptions
+                              : [
+                                  { role_key: 'kitchen', name: '后厨备餐员', enabled: 1 },
+                                  { role_key: 'order_handler', name: '接单配送员', enabled: 1 },
+                                ]
+                            ).map((r) => (
+                              <option key={r.role_key} value={r.role_key}>
+                                {r.name}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </td>
 
