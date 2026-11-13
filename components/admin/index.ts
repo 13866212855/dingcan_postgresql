@@ -9,3 +9,4 @@ export { default as StoreManagement } from './StoreManagement';
 export { default as TenantManagement } from './TenantManagement';
 export { default as LLMManagement } from './LLMManagement';
 export { default as KitchenDisplayView } from './KitchenDisplayView';
+export { default as JsonDishImportModal } from './JsonDishImportModal';

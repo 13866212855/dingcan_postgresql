@@ -88,8 +88,32 @@ export default function RoleManagement({ tenantId = 'default' }: RoleManagementP
   }, [tenantId]);
 
   useEffect(() => {
-    fetchRoles();
-  }, [fetchRoles]);
+    let ignore = false;
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/admin/roles?tenant=${encodeURIComponent(tenantId)}`, {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        });
+        const data = await parseJsonResponse(res);
+        if (!ignore) {
+          if (data?.success && Array.isArray(data.data)) {
+            setRoles(data.data);
+            if (Array.isArray(data.catalog)) setCatalog(data.catalog);
+            if (Array.isArray(data.actorPermissions)) setActorPerms(data.actorPermissions);
+          } else {
+            setError(data?.error || '获取角色列表失败');
+          }
+        }
+      } catch (e: any) {
+        if (!ignore) setError('加载失败: ' + (e?.message || ''));
+      }
+    };
+    void run();
+    return () => {
+      ignore = true;
+    };
+  }, [tenantId]);
 
   const groupedCatalog = useMemo(() => {
     const groups: Record<string, CatalogItem[]> = {};

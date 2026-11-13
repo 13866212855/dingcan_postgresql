@@ -1,31 +1,19 @@
 'use client';
 
 import React, { useState, useMemo, useRef } from 'react';
-import { X, FileJson, FileUp, Loader2, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import {
+  X,
+  FileJson,
+  FileUp,
+  Upload,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  ImageIcon,
+  RefreshCw,
+} from 'lucide-react';
 import { Dish } from '@/types';
 import { parseJsonResponse } from '@/lib/utils';
-
-/**
- * JSON 菜品导入弹窗：选择本系统导出的菜品 JSON 文件 → 本地解析预览（新建/同名跳过/无效）
- * → 确认后 POST /api/dishes/import-json → 展示服务端权威结果。
- * 配套「导出 JSON」按钮使用，实现门店间菜品搬运（同部署直接可用；跨服务器勾选导出「包含图片」）。
- */
-
-const MAX_FILE_BYTES = 30 * 1024 * 1024; // 与服务端 413 上限一致
-
-interface ParsedPayload {
-  dishes: any[];
-  images: Record<string, string> | null;
-}
-
-interface ImportResult {
-  created: number;
-  skipped: number;
-  invalid: number;
-  externalImageCount: number;
-  embeddedImageCount: number;
-  reusedImageCount: number;
-}
 
 interface JsonDishImportModalProps {
   isOpen: boolean;
@@ -35,298 +23,538 @@ interface JsonDishImportModalProps {
   existingDishes?: Dish[];
 }
 
-export default function JsonDishImportModal({
-  isOpen,
+interface ParsedJsonDish {
+  name: string;
+  price: number;
+  category: string;
+  description?: string;
+  image?: string;
+  status?: number;
+  taste_options?: string;
+}
+
+interface ParsedPayload {
+  format_version?: number;
+  exported_at?: string;
+  source_tenant?: string;
+  count?: number;
+  dishes: ParsedJsonDish[];
+  images?: Record<string, string>;
+}
+
+interface ImportResultData {
+  created: number;
+  skipped: number;
+  invalid: number;
+  externalImageCount: number;
+  embeddedImageCount: number;
+  reusedImageCount: number;
+}
+
+const MAX_FILE_BYTES = 30 * 1024 * 1024;
+const MAX_DISHES = 500;
+
+function JsonDishImportInner({
   onClose,
   onSuccess,
   tenantId = 'default',
   existingDishes = [],
-}: JsonDishImportModalProps) {
+}: Omit<JsonDishImportModalProps, 'isOpen'>) {
   const [fileName, setFileName] = useState('');
+  const [fileSize, setFileSize] = useState(0);
+  const [rawJsonText, setRawJsonText] = useState('');
   const [parsed, setParsed] = useState<ParsedPayload | null>(null);
+  const [parseError, setParseError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+
   const [importing, setImporting] = useState(false);
-  const [error, setError] = useState('');
-  const [result, setResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState('');
+  const [importResult, setImportResult] = useState<{
+    message: string;
+    data: ImportResultData;
+  } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 本地预览统计（与服务端 createDishesBatch 同口径：btrim 同名跳过、name/price 校验）
-  const preview = useMemo(() => {
-    if (!parsed) return null;
-    const existingNames = new Set(existingDishes.map((d) => (d.name || '').trim()));
-    const toCreate: string[] = [];
-    const skippedNames: string[] = [];
-    const invalidCount = { n: 0 };
-    const seen = new Set<string>();
-    let externalImageCount = 0;
-    let missingImageData = 0;
+  const existingNames = useMemo(
+    () => new Set(existingDishes.map((d) => d.name.trim())),
+    [existingDishes]
+  );
+
+  const stats = useMemo(() => {
+    if (!parsed) {
+      return {
+        total: 0,
+        willCreate: 0,
+        duplicate: 0,
+        invalid: 0,
+        embeddedImages: 0,
+        externalImages: 0,
+      };
+    }
+
+    let willCreate = 0;
+    let duplicate = 0;
+    let invalid = 0;
+    let externalImages = 0;
+    const seenInFile = new Set<string>();
+
     for (const d of parsed.dishes) {
       const name = String(d?.name || '').trim();
       const price = Number(d?.price);
-      if (!name || !(price >= 0)) {
-        invalidCount.n++;
+      const isInvalid = !name || !Number.isFinite(price) || price < 0;
+      if (isInvalid) {
+        invalid++;
         continue;
       }
-      if (existingNames.has(name) || seen.has(name)) {
-        skippedNames.push(name);
-        continue;
+      if (existingNames.has(name) || seenInFile.has(name)) {
+        duplicate++;
+      } else {
+        seenInFile.add(name);
+        willCreate++;
       }
-      seen.add(name);
-      toCreate.push(name);
       const img = String(d?.image || '').trim();
       if (/^https?:\/\//i.test(img)) {
-        externalImageCount++;
-      } else if (img.startsWith('/uploads/') && parsed.images && !parsed.images[img]) {
-        // 未勾选「包含图片」导出（或该图缺失）：路径原样保留，目标服务器无此文件时会裂图
-        missingImageData++;
+        externalImages++;
       }
     }
+
+    const embeddedImages =
+      parsed.images && typeof parsed.images === 'object' && !Array.isArray(parsed.images)
+        ? Object.keys(parsed.images).length
+        : 0;
+
     return {
-      toCreate,
-      skippedNames,
-      invalidCount: invalidCount.n,
-      externalImageCount,
-      missingImageData,
-      hasImages: !!parsed.images,
+      total: parsed.dishes.length,
+      willCreate,
+      duplicate,
+      invalid,
+      embeddedImages,
+      externalImages,
     };
-  }, [parsed, existingDishes]);
+  }, [parsed, existingNames]);
 
-  const resetAll = () => {
+  const resetFileState = () => {
     setFileName('');
+    setFileSize(0);
+    setRawJsonText('');
     setParsed(null);
-    setImporting(false);
-    setError('');
-    setResult(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    setParseError('');
+    setImportError('');
+    setImportResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  const handleClose = () => {
-    resetAll();
-    onClose();
-  };
-
-  const handlePickFile = () => {
-    setError('');
-    setResult(null);
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+  const handleFile = async (file: File) => {
+    setParseError('');
+    setImportError('');
+    setImportResult(null);
     setParsed(null);
-    setResult(null);
-    setError('');
-    setFileName(f ? f.name : '');
-    if (!f) return;
-    if (f.size > MAX_FILE_BYTES) {
-      setError('文件超过 30MB 上限，请改用「不含图片」方式导出后再导入');
+
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      setParseError('文件体积超过 30MB 上限，请取消勾选「含图片」后重新导出再试');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(String(reader.result));
-        const dishes = Array.isArray(data?.dishes) ? data.dishes : null;
-        if (!dishes) throw new Error('缺少 dishes 数组，不是本系统导出的菜品文件');
-        if (dishes.length === 0) throw new Error('文件中没有菜品数据');
-        if (dishes.length > 500) throw new Error('菜品数超过 500 道单次导入上限');
-        const images =
-          data.images && typeof data.images === 'object' && !Array.isArray(data.images)
-            ? (data.images as Record<string, string>)
-            : null;
-        setParsed({ dishes, images });
-      } catch (err: any) {
-        setError('解析失败：' + (err?.message || '文件不是合法 JSON'));
+
+    setFileName(file.name);
+    setFileSize(file.size);
+
+    try {
+      const text = await file.text();
+      const obj = JSON.parse(text);
+      if (!obj || !Array.isArray(obj.dishes)) {
+        setParseError('文件中缺少 dishes 数组，请确认选择的是本系统导出的菜品 JSON 文件');
+        return;
       }
-    };
-    reader.onerror = () => setError('读取文件失败，请重试');
-    reader.readAsText(f);
+      if (obj.dishes.length === 0) {
+        setParseError('该 JSON 文件中没有包含任何菜品数据');
+        return;
+      }
+      if (obj.dishes.length > MAX_DISHES) {
+        setParseError(`单次最多导入 ${MAX_DISHES} 道菜品，当前文件包含 ${obj.dishes.length} 道`);
+        return;
+      }
+
+      setRawJsonText(text);
+      setParsed(obj as ParsedPayload);
+    } catch {
+      setParseError('无法解析文件内容：不是合法的 JSON 格式');
+    }
   };
 
-  const handleImport = async () => {
-    if (!parsed || importing) return;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      void handleFile(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      void handleFile(file);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!parsed || !rawJsonText || importing) return;
     setImporting(true);
-    setError('');
+    setImportError('');
     try {
-      const res = await fetch(`/api/dishes/import-json?tenant=${encodeURIComponent(tenantId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dishes: parsed.dishes, images: parsed.images || undefined }),
-      });
+      const res = await fetch(
+        `/api/dishes/import-json?tenant=${encodeURIComponent(tenantId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: rawJsonText,
+        }
+      );
       const data = await parseJsonResponse<any>(res, { success: false });
-      if (!data.success) throw new Error(data.error || `HTTP ${res.status}`);
-      setResult(data.data as ImportResult);
+      if (!data.success) {
+        setImportError(data.error || '导入失败，请稍后重试');
+        return;
+      }
+      setImportResult({
+        message: data.message || '导入成功',
+        data: data.data,
+      });
       onSuccess();
     } catch (err: any) {
-      setError('导入失败：' + (err?.message || ''));
+      setImportError('导入请求失败: ' + (err?.message || '网络异常'));
     } finally {
       setImporting(false);
     }
   };
 
-  // Hooks 顺序红线：所有 hook 必须位于上方，早退之后不得再出现任何 hook（React #310）
-  if (!isOpen) return null;
-
-  const totalNew = preview?.toCreate.length || 0;
+  const resolvePreviewImage = (img?: string): string => {
+    const trimmed = String(img || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('/uploads/') && parsed?.images?.[trimmed]) {
+      return parsed.images[trimmed];
+    }
+    return trimmed;
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[88vh]">
-        {/* Header */}
-        <div className="p-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/80 rounded-t-3xl">
-          <div className="flex items-center space-x-2">
-            <FileJson className="w-5 h-5 text-emerald-600" />
-            <h3 className="text-sm font-bold text-neutral-900">导入菜品 JSON</h3>
+    <div className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+      {/* Header */}
+      <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 shrink-0">
+        <div className="flex items-center space-x-2.5">
+          <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shadow-xs">
+            <FileJson className="w-5 h-5" />
           </div>
-          <button
-            onClick={handleClose}
-            disabled={importing}
-            className="p-1 text-neutral-400 hover:text-neutral-600 rounded-full disabled:opacity-40"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div>
+            <h3 className="text-sm sm:text-base font-bold text-neutral-900">
+              导入菜品 JSON 文件
+            </h3>
+            <p className="text-[11px] text-neutral-500">
+              支持导入从本系统导出的菜品 JSON（自动跳过同名菜品，只新增不覆盖已有菜品）
+            </p>
+          </div>
         </div>
+        <button
+          onClick={onClose}
+          disabled={importing}
+          className="p-1.5 text-neutral-400 hover:text-neutral-700 hover:bg-white/70 rounded-full transition-colors disabled:opacity-50"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
 
-        {/* Body */}
-        <div className="p-4 space-y-3 overflow-y-auto">
-          {/* 选择文件 */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <button
-            onClick={handlePickFile}
-            disabled={importing}
-            className="w-full py-6 px-4 border-2 border-dashed border-neutral-300 hover:border-emerald-400 hover:bg-emerald-50/40 rounded-2xl flex flex-col items-center justify-center space-y-1.5 text-neutral-500 transition-colors disabled:opacity-50"
-          >
-            <FileUp className="w-7 h-7 text-neutral-400" />
-            <span className="text-xs font-bold">{fileName || '点击选择菜品 JSON 文件'}</span>
-            <span className="text-[10px] text-neutral-400">
-              由「导出 JSON」生成 · 单次最多 500 道 · ≤30MB
-            </span>
-          </button>
+      {/* Body */}
+      <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-4 text-xs">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleInputChange}
+          className="hidden"
+        />
 
-          {error && (
-            <div className="flex items-start space-x-2 bg-rose-50 border border-rose-200 rounded-xl p-3">
-              <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-              <span className="text-xs text-rose-700 font-bold leading-relaxed break-all">{error}</span>
+        {importResult ? (
+          /* 完成态 */
+          <div className="py-6 px-4 bg-emerald-50/70 border border-emerald-200 rounded-2xl text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-xs">
+              <CheckCircle2 className="w-7 h-7" />
             </div>
-          )}
-
-          {/* 预览统计（文件已解析、尚未导入） */}
-          {parsed && preview && !result && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-center">
-                  <div className="text-lg font-black text-emerald-600">{preview.toCreate.length}</div>
-                  <div className="text-[10px] font-bold text-emerald-700">将新建</div>
-                </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-center">
-                  <div className="text-lg font-black text-amber-600">{preview.skippedNames.length}</div>
-                  <div className="text-[10px] font-bold text-amber-700">同名跳过</div>
-                </div>
-                <div className="bg-rose-50 border border-rose-200 rounded-xl p-2.5 text-center">
-                  <div className="text-lg font-black text-rose-600">{preview.invalidCount}</div>
-                  <div className="text-[10px] font-bold text-rose-700">无效跳过</div>
+            <div>
+              <h4 className="text-base font-black text-emerald-900">菜品导入完成</h4>
+              <p className="text-xs text-emerald-800 mt-1">{importResult.message}</p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-lg mx-auto pt-2">
+              <div className="bg-white p-2.5 rounded-xl border border-emerald-200">
+                <div className="text-[10px] text-neutral-500">新增入库</div>
+                <div className="text-base font-black text-emerald-600">
+                  {importResult.data?.created ?? 0} 道
                 </div>
               </div>
-
-              {preview.skippedNames.length > 0 && (
-                <div className="bg-amber-50/60 border border-amber-100 rounded-xl p-2.5">
-                  <div className="text-[10px] font-bold text-amber-700 mb-1">
-                    同名菜品（保留本店现有版本，不做改动）：
-                  </div>
-                  <div className="text-[10px] text-amber-600 leading-relaxed">
-                    {preview.skippedNames.slice(0, 12).join('、')}
-                    {preview.skippedNames.length > 12 && ` 等 ${preview.skippedNames.length} 道`}
-                  </div>
+              <div className="bg-white p-2.5 rounded-xl border border-neutral-200">
+                <div className="text-[10px] text-neutral-500">同名跳过</div>
+                <div className="text-base font-black text-amber-600">
+                  {importResult.data?.skipped ?? 0} 道
                 </div>
-              )}
-
-              {preview.externalImageCount > 0 && (
-                <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                  <span className="text-[10px] text-amber-700 leading-relaxed">
-                    {preview.externalImageCount} 道菜使用外部图片链接，导入后如外站不可达会显示裂图，建议到菜品编辑里替换为本地图。
+              </div>
+              <div className="bg-white p-2.5 rounded-xl border border-neutral-200">
+                <div className="text-[10px] text-neutral-500">落地/复用图片</div>
+                <div className="text-base font-black text-sky-600">
+                  {(importResult.data?.embeddedImageCount ?? 0) +
+                    (importResult.data?.reusedImageCount ?? 0)}{' '}
+                  张
+                </div>
+              </div>
+              <div className="bg-white p-2.5 rounded-xl border border-neutral-200">
+                <div className="text-[10px] text-neutral-500">外部图链</div>
+                <div className="text-base font-black text-neutral-700">
+                  {importResult.data?.externalImageCount ?? 0} 张
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : !parsed ? (
+          /* 上传选文件区 */
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
+              isDragging
+                ? 'border-emerald-500 bg-emerald-50'
+                : 'border-neutral-300 bg-neutral-50/70 hover:border-emerald-400 hover:bg-emerald-50/30'
+            }`}
+          >
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+              <Upload className="w-6 h-6" />
+            </div>
+            <p className="text-sm font-bold text-neutral-800">
+              点击选择菜品 JSON 文件，或将文件拖拽到此处
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-1.5">
+              单次最多支持 {MAX_DISHES} 道菜品、文件不超过 30MB；导入将追加到当前门店（{tenantId}）
+            </p>
+            {fileName && parseError && (
+              <p className="text-[11px] text-neutral-500 mt-2 font-mono">
+                已选文件：{fileName} ({(fileSize / 1024).toFixed(1)} KB)
+              </p>
+            )}
+          </div>
+        ) : (
+          /* 解析成功预览区 */
+          <>
+            <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <div className="font-bold text-neutral-900 flex items-center space-x-2">
+                  <FileJson className="w-4 h-4 text-emerald-600" />
+                  <span>{fileName}</span>
+                  <span className="text-[10px] font-mono text-neutral-500">
+                    ({(fileSize / 1024).toFixed(1)} KB)
                   </span>
                 </div>
-              )}
-
-              {preview.missingImageData > 0 && (
-                <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                  <span className="text-[10px] text-amber-700 leading-relaxed">
-                    {preview.missingImageData} 道菜的图片数据未包含在文件中（导出时未勾选「包含图片」或文件缺失）。若本服务器没有对应图片文件，这些菜会显示占位图。
-                  </span>
+                <div className="text-[11px] text-neutral-500 flex flex-wrap gap-x-3">
+                  {parsed.source_tenant && <span>来源门店：{parsed.source_tenant}</span>}
+                  {parsed.exported_at && (
+                    <span>
+                      导出时间：{new Date(parsed.exported_at).toLocaleString('zh-CN')}
+                    </span>
+                  )}
                 </div>
-              )}
+              </div>
+              <button
+                type="button"
+                onClick={resetFileState}
+                disabled={importing}
+                className="px-3 py-1.5 bg-white border border-neutral-200 hover:bg-neutral-100 text-neutral-700 rounded-xl text-[11px] font-bold flex items-center space-x-1 transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>重选文件</span>
+              </button>
+            </div>
 
-              <div className="flex items-start space-x-2 bg-sky-50 border border-sky-100 rounded-xl p-2.5">
-                <Info className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
-                <span className="text-[10px] text-sky-700 leading-relaxed">
-                  导入只新增菜品、绝不改动本店已有菜（同名自动跳过）；导入成功后可在本店随意改价、上下架、删除，与来源店互不影响。
+            {/* 汇总统计卡 */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="bg-white p-3 rounded-xl border border-neutral-200">
+                <span className="text-[10px] text-neutral-500 block">文件菜品总数</span>
+                <span className="text-base font-black text-neutral-900">{stats.total} 道</span>
+              </div>
+              <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200">
+                <span className="text-[10px] text-emerald-700 font-bold block">预计新增入库</span>
+                <span className="text-base font-black text-emerald-700">
+                  {stats.willCreate} 道
+                </span>
+              </div>
+              <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-200">
+                <span className="text-[10px] text-amber-700 font-bold block">同名自动跳过</span>
+                <span className="text-base font-black text-amber-700">{stats.duplicate} 道</span>
+              </div>
+              <div className="bg-sky-50/70 p-3 rounded-xl border border-sky-200">
+                <span className="text-[10px] text-sky-700 font-bold block">内嵌图片 / 外链</span>
+                <span className="text-sm font-black text-sky-800">
+                  {stats.embeddedImages} 张 / {stats.externalImages} 条
                 </span>
               </div>
             </div>
-          )}
 
-          {/* 服务端结果 */}
-          {result && (
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-                <div className="text-xs font-bold text-emerald-700">
-                  导入完成：新增 {result.created} 道，同名跳过 {result.skipped} 道
-                  {result.invalid > 0 ? `，无效跳过 ${result.invalid} 道` : ''}。
-                </div>
+            {stats.externalImages > 0 && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  检测到 {stats.externalImages} 道菜品使用了外部 http(s) 图片链接，将原样保留。若原外链失效可能出现裂图；建议导出时使用本地上传图并勾选「含图片」。
+                </span>
               </div>
-              <div className="text-[10px] text-neutral-500 leading-relaxed px-1">
-                {result.embeddedImageCount > 0 &&
-                  `已落地内嵌图片 ${result.embeddedImageCount} 张为本店本地图；`}
-                {result.reusedImageCount > 0 &&
-                  `${result.reusedImageCount} 张图片与本地文件一致，直接复用；`}
-                {result.externalImageCount > 0 &&
-                  `${result.externalImageCount} 道菜保留外部图片链接（如裂图请手动换图）。`}
-                菜品库列表已刷新。
+            )}
+
+            {/* 预览表格 */}
+            <div className="border border-neutral-200 rounded-2xl overflow-hidden">
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 bg-neutral-50 border-b border-neutral-200 text-neutral-500 font-bold z-10">
+                    <tr>
+                      <th className="py-2.5 px-3 w-14">图片</th>
+                      <th className="py-2.5 px-3">菜品名称</th>
+                      <th className="py-2.5 px-3 w-20">价格</th>
+                      <th className="py-2.5 px-3 w-24">分类</th>
+                      <th className="py-2.5 px-3 w-24 text-right">导入处理</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {parsed.dishes.map((dish, idx) => {
+                      const dName = String(dish?.name || '').trim();
+                      const dPrice = Number(dish?.price);
+                      const isInvalid = !dName || !Number.isFinite(dPrice) || dPrice < 0;
+                      const isDup = !isInvalid && existingNames.has(dName);
+                      const previewSrc = resolvePreviewImage(dish?.image);
+
+                      return (
+                        <tr
+                          key={`${dName}-${idx}`}
+                          className={isDup || isInvalid ? 'bg-neutral-50/70 opacity-70' : ''}
+                        >
+                          <td className="py-2 px-3">
+                            <div className="w-10 h-10 rounded-lg bg-neutral-100 border border-neutral-200 overflow-hidden flex items-center justify-center">
+                              {previewSrc ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={previewSrc}
+                                  alt={dName}
+                                  className="w-full h-full object-contain p-0.5"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <ImageIcon className="w-4 h-4 text-neutral-300" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="font-bold text-neutral-900">
+                              {dName || <span className="text-rose-500">(缺少菜名)</span>}
+                            </div>
+                            {dish.taste_options && (
+                              <div className="text-[10px] text-amber-700 mt-0.5 truncate max-w-[200px]">
+                                口味：{dish.taste_options}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 font-bold text-rose-600">
+                            {Number.isFinite(dPrice) ? `¥${dPrice.toFixed(2)}` : '-'}
+                          </td>
+                          <td className="py-2 px-3 text-neutral-600">{dish.category || '默认'}</td>
+                          <td className="py-2 px-3 text-right">
+                            {isInvalid ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700">
+                                数据无效
+                              </span>
+                            ) : isDup ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                                同名跳过
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                                即将新增
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-          )}
-        </div>
+          </>
+        )}
 
-        {/* Footer */}
-        <div className="p-4 pt-0 flex items-center space-x-2.5">
+        {(parseError || importError) && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{parseError || importError}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 bg-neutral-50 border-t border-neutral-100 flex items-center justify-between space-x-2.5 shrink-0">
+        <span className="text-[11px] text-neutral-400 hidden sm:block">
+          {importResult
+            ? '菜品列表已自动刷新'
+            : parsed
+            ? `预计新增 ${stats.willCreate} 道，同名跳过 ${stats.duplicate} 道`
+            : '仅新增门店缺失的菜品，不会修改或覆盖已有菜品'}
+        </span>
+        <div className="flex items-center space-x-2.5 ml-auto">
           <button
-            onClick={handleClose}
+            type="button"
+            onClick={onClose}
             disabled={importing}
-            className="flex-1 py-2.5 bg-white border border-neutral-200 hover:bg-neutral-50 text-neutral-600 text-xs font-bold rounded-xl transition-colors disabled:opacity-50"
+            className="px-4 py-2 rounded-xl text-xs font-medium text-neutral-600 hover:bg-neutral-200 transition-colors cursor-pointer"
           >
-            {result ? '完成' : '取消'}
+            {importResult ? '完成关闭' : '取消'}
           </button>
-          {!result && (
+          {!importResult && (
             <button
-              id="btn-confirm-json-import"
-              onClick={handleImport}
-              disabled={!parsed || importing || totalNew === 0}
-              className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center space-x-1.5 transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              title={totalNew === 0 ? '文件中没有需要新建的菜品' : '开始导入（同名菜品自动跳过）'}
+              type="button"
+              onClick={handleConfirmImport}
+              disabled={!parsed || importing || stats.willCreate === 0}
+              className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 transition-colors shadow-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1.5 cursor-pointer"
             >
               {importing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>正在导入...</span>
-                </>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <>
-                  <FileUp className="w-4 h-4" />
-                  <span>确认导入{totalNew > 0 ? ` ${totalNew} 道` : ''}</span>
-                </>
+                <FileUp className="w-3.5 h-3.5" />
               )}
+              <span>
+                {importing
+                  ? '正在导入...'
+                  : stats.willCreate > 0
+                  ? `确认导入 (${stats.willCreate} 道)`
+                  : '无可新增菜品'}
+              </span>
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export default function JsonDishImportModal(props: JsonDishImportModalProps) {
+  if (!props.isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+      <JsonDishImportInner
+        onClose={props.onClose}
+        onSuccess={props.onSuccess}
+        tenantId={props.tenantId || 'default'}
+        existingDishes={props.existingDishes || []}
+      />
     </div>
   );
 }

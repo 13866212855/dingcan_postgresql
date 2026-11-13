@@ -325,17 +325,14 @@ export async function ensureDatabase(): Promise<Pool> {
 
   initPromise = (async () => {
     try {
-      // 0. 检测库是否已初始化过（决定是否跳过种子数据）。
-      //    注意：这里绝不提前 return——迁移 ALTER 批对每个新进程都必须执行（幂等），
-      //    否则代码新增的列（如 kitchen_status）永远不会落到已存在的老库上，
-      //    造成"列不存在"运行时错误（2026-11-10 kitchen_status 事故根因）。
-      let wasInitialized = false;
+      // 0. Fast-path check: if schema already initialized, skip heavy migration/seed loops
       try {
         const initCheck = await pool.query(
           "SELECT 1 FROM settings WHERE key = 'db_initialized_v2' LIMIT 1"
         );
         if (initCheck.rows.length > 0) {
-          wasInitialized = true;
+          isInitDone = true;
+          return;
         }
       } catch {
         // settings table might not exist yet, continue to create tables
@@ -628,8 +625,6 @@ export async function ensureDatabase(): Promise<Pool> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_tenant_phone ON staff_users(tenant_id, phone);
       `);
 
-      // 3-6. Seed tenants/dishes/tables/settings：仅首次初始化执行（老库跳过，省每启动 N 次往返）
-      if (!wasInitialized) {
       // 3. Seed tenants
       for (const t of DEFAULT_TENANTS) {
         await pool.query(
@@ -712,9 +707,7 @@ export async function ensureDatabase(): Promise<Pool> {
         }
       }
 
-      } // end if (!wasInitialized) —— 种子数据仅在首次初始化执行
-
-      // 7. Mark database initialization complete so next boots skip seeding
+      // 7. Mark database initialization complete so next boots are instant
       try {
         await pool.query(
           `INSERT INTO settings (tenant_id, key, value)
@@ -2247,26 +2240,18 @@ export async function getAllOrders(
   const params: any[] = [tenantId];
   let paramIdx = 2;
 
-  // 员工数据隔离（方案B·状态机解耦 2026-11-10）：
+  // 员工数据隔离：
   // 1. 后厨角色（kitchen）：查看全店需要备餐制作与出餐的订单，确保后厨对全店菜品制作统揽。
-  // 2. 接单/配送员角色（order_handler）：可见集 = 无主的活动单（未被认领且未完成/未取消——
-  //    后厨开火制作/齐餐等任何烹饪动作不再影响配送侧可见性）+ 本人已认领/配送中的单。
+  // 2. 接单/配送员角色（order_handler）：查看【待处理/待接单】公共新订单，以及本人已认领/配送中的订单。
   // 3. 管理员（非 staff）：查看该租户全量订单。
   if (staffUser?.phone) {
     if (staffUser.role === 'kitchen') {
       // 后厨角色不按手机号过滤，能够看到本店全部备餐订单
     } else {
-      sql += ` AND ((COALESCE(handler_phone,'') = '' AND status NOT IN ('已完成','已取消')) OR handler_phone = $${paramIdx} OR rider_phone = $${paramIdx})`;
+      sql += ` AND (status = '待处理' OR handler_phone = $${paramIdx} OR rider_phone = $${paramIdx})`;
       params.push(staffUser.phone);
       paramIdx++;
     }
-  }
-
-  // 排序：接单员视图把「已备齐且无主」的单置顶（做好了等取的单优先级天然最高），其余视图按创建时间倒序
-  let orderClause = ' ORDER BY created_at DESC';
-  if (staffUser?.phone && staffUser.role !== 'kitchen') {
-    orderClause =
-      " ORDER BY (kitchen_status = '已备齐' AND COALESCE(handler_phone,'') = '') DESC, created_at DESC";
   }
 
   if (filterStatus && filterStatus !== '全部') {
@@ -2281,7 +2266,7 @@ export async function getAllOrders(
     paramIdx++;
   }
 
-  sql += orderClause;
+  sql += ' ORDER BY created_at DESC';
 
   const result = await pool.query(sql, params);
   if (result.rows.length === 0) return [];
@@ -2410,15 +2395,10 @@ export async function updateOrderStatus(
         error: `手慢了！该订单已被接单员【${order.handler_name || '其他同事'}】接单处理，您无法处理同一订单。`,
       };
     }
-    // 方案B·状态机解耦（2026-11-10）：认领资格 = 无主的活动单（含后厨已开火/已齐餐的制作中单——
-    // 烹饪动作不再剥夺配送侧认领权）或本人已认领的单；已完成/已取消的单不可认领
-    const claimedByMe = (order.handler_phone || '') === handlerPhone;
-    const isUnclaimedActive =
-      !(order.handler_phone || '') && order.status !== '已完成' && order.status !== '已取消';
-    if (!claimedByMe && !isUnclaimedActive) {
+    if (order.status !== '待处理' && order.handler_phone !== handlerPhone) {
       return {
         success: false,
-        error: `该订单当前不可接单（当前状态：${order.status}），您无法处理。`,
+        error: `该订单已由其他接单员处理（当前状态：${order.status}），您无法处理。`,
       };
     }
 
@@ -2427,7 +2407,7 @@ export async function updateOrderStatus(
        SET status = $1, updated_at = $2, handler_name = $3, handler_phone = $4, handler_id = $5,
            kitchen_status = $6, delivery_status = $7, rider_name = $8, rider_phone = $9, rider_id = $10
        WHERE id = $11 AND tenant_id = $12
-         AND ((COALESCE(handler_phone,'') = '' AND status NOT IN ('已完成','已取消')) OR handler_phone = $4)
+         AND (status = '待处理' OR handler_phone = $4)
        RETURNING id`,
       [
         status,
