@@ -39,6 +39,7 @@ import {
   FileJson,
   FileUp,
   ShieldCheck,
+  FolderArchive,
 } from 'lucide-react';
 import DishFormModal from '@/components/admin/DishFormModal';
 import SmartDishBatchModal from '@/components/admin/SmartDishBatchModal';
@@ -1124,6 +1125,13 @@ export default function AdminPage() {
                             <Plus className="w-3.5 h-3.5" />
                             <span>添加/管理所有门店...</span>
                           </button>
+                          <Link
+                            href="/admin/skill-export"
+                            className="w-full text-left px-2.5 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700 rounded-lg font-medium flex items-center space-x-1.5 transition-colors"
+                          >
+                            <FolderArchive className="w-3.5 h-3.5 text-amber-400" />
+                            <span>导出架构技能 (my_create_multenant)</span>
+                          </Link>
                         </div>
                       </div>
                     )}
@@ -1383,6 +1391,17 @@ export default function AdminPage() {
                 {soundEnabled ? '声音开' : '静音'}
               </span>
             </button>
+
+            {isMasterAdmin && (
+              <Link
+                href="/admin/skill-export"
+                className="hidden sm:flex items-center space-x-1 text-xs px-2.5 py-1.5 rounded-lg bg-neutral-800 text-neutral-200 hover:bg-neutral-700 transition-colors whitespace-nowrap shrink-0"
+                title="预览与导出 my_create_multenant 多租户架构技能"
+              >
+                <FolderArchive className="w-3.5 h-3.5 text-amber-400" />
+                <span>架构技能</span>
+              </Link>
+            )}
 
             <Link
               href={currentTenantId && currentTenantId !== 'default' ? `/?tenant=${encodeURIComponent(currentTenantId)}` : '/'}
